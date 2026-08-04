@@ -1,0 +1,77 @@
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+from pathlib import Path
+
+from slide2study.chunking import HierarchicalChunker
+from slide2study.evaluation import evaluate
+from slide2study.io import load_chunks, read_jsonl, write_jsonl
+from slide2study.parsing import get_parser
+from slide2study.retrieval import BM25Retriever
+from slide2study.training import mine_hard_negatives
+
+
+def _print_json(value: object, *, indent: int | None = None) -> None:
+    """Keep Chinese output reliable on Windows terminals with a legacy code page."""
+    payload = json.dumps(value, ensure_ascii=False, indent=indent)
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    print(payload)
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(prog="slide2study", description="Slide2Study retrieval baseline")
+    commands = parser.add_subparsers(dest="command", required=True)
+
+    ingest = commands.add_parser("ingest", help="Parse and chunk a PDF, PPTX, TXT or Markdown file")
+    ingest.add_argument("document", type=Path)
+    ingest.add_argument("--output", type=Path, required=True)
+    ingest.add_argument("--max-chars", type=int, default=500)
+    ingest.add_argument("--overlap", type=int, default=1)
+
+    search = commands.add_parser("search", help="Search a chunk corpus with BM25")
+    search.add_argument("corpus", type=Path)
+    search.add_argument("query")
+    search.add_argument("--top-k", type=int, default=5)
+
+    evaluation = commands.add_parser("evaluate", help="Evaluate BM25 on a JSONL QA set")
+    evaluation.add_argument("corpus", type=Path)
+    evaluation.add_argument("dataset", type=Path)
+    evaluation.add_argument("--top-k", type=int, default=5)
+
+    mining = commands.add_parser("mine-negatives", help="Mine BM25 hard negatives for training")
+    mining.add_argument("corpus", type=Path)
+    mining.add_argument("dataset", type=Path)
+    mining.add_argument("--output", type=Path, required=True)
+    mining.add_argument("--top-k", type=int, default=20)
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = build_parser().parse_args(argv)
+    if args.command == "ingest":
+        pages = get_parser(args.document).parse(args.document)
+        chunks = HierarchicalChunker(args.max_chars, args.overlap).chunk(pages)
+        write_jsonl((chunk.to_dict() for chunk in chunks), args.output)
+        _print_json({"pages": len(pages), "chunks": len(chunks), "output": str(args.output)})
+        return 0
+    chunks = load_chunks(args.corpus)
+    retriever = BM25Retriever(chunks)
+    if args.command == "search":
+        results = retriever.search(args.query, args.top_k)
+        _print_json([result.to_dict() for result in results], indent=2)
+        return 0
+    examples = list(read_jsonl(args.dataset))
+    if args.command == "mine-negatives":
+        triplets = mine_hard_negatives(retriever, examples, chunks, args.top_k)
+        write_jsonl((triplet.to_dict() for triplet in triplets), args.output)
+        _print_json({"triplets": len(triplets), "output": str(args.output)})
+        return 0
+    _print_json(evaluate(retriever, examples, args.top_k).to_dict(), indent=2)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

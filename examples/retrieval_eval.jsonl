@@ -1,0 +1,4 @@
+{"id":"q1","query":"什么方法通过限制参数大小来降低模型复杂度？","relevant_pages":[2]}
+{"id":"q2","query":"验证集的作用是什么？","relevant_pages":[3]}
+{"id":"q3","query":"反向传播怎样计算梯度？","relevant_pages":[4]}
+{"id":"q4","query":"训练误差低但泛化误差高叫什么？","relevant_pages":[1]}
