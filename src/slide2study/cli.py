@@ -8,7 +8,7 @@ from pathlib import Path
 from slide2study.chunking import HierarchicalChunker
 from slide2study.evaluation import evaluate
 from slide2study.io import load_chunks, read_jsonl, write_jsonl
-from slide2study.parsing import get_parser
+from slide2study.parsing import build_parse_report, get_parser
 from slide2study.retrieval import BM25Retriever
 from slide2study.training import mine_hard_negatives
 
@@ -31,6 +31,11 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--max-chars", type=int, default=500)
     ingest.add_argument("--overlap", type=int, default=1)
 
+    inspect = commands.add_parser("inspect", help="Diagnose document extraction quality")
+    inspect.add_argument("document", type=Path)
+    inspect.add_argument("--pages-output", type=Path)
+    inspect.add_argument("--low-text-threshold", type=int, default=40)
+
     search = commands.add_parser("search", help="Search a chunk corpus with BM25")
     search.add_argument("corpus", type=Path)
     search.add_argument("query")
@@ -51,11 +56,22 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "inspect":
+        pages = get_parser(args.document).parse(args.document)
+        if args.pages_output:
+            write_jsonl((page.to_dict() for page in pages), args.pages_output)
+        report = build_parse_report(pages, args.low_text_threshold).to_dict()
+        if args.pages_output:
+            report["pages_output"] = str(args.pages_output)
+        _print_json(report, indent=2)
+        return 0
     if args.command == "ingest":
         pages = get_parser(args.document).parse(args.document)
         chunks = HierarchicalChunker(args.max_chars, args.overlap).chunk(pages)
         write_jsonl((chunk.to_dict() for chunk in chunks), args.output)
-        _print_json({"pages": len(pages), "chunks": len(chunks), "output": str(args.output)})
+        report = build_parse_report(pages).to_dict()
+        report.update({"chunks": len(chunks), "output": str(args.output)})
+        _print_json(report)
         return 0
     chunks = load_chunks(args.corpus)
     retriever = BM25Retriever(chunks)

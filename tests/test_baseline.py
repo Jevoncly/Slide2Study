@@ -1,9 +1,12 @@
+import importlib.util
+import tempfile
 import unittest
 from pathlib import Path
 
 from slide2study.chunking import HierarchicalChunker
 from slide2study.evaluation import evaluate
-from slide2study.parsing import TextParser
+from slide2study.models import Page
+from slide2study.parsing import PDFParser, PPTXParser, TextParser, build_parse_report
 from slide2study.retrieval import BM25Retriever, mixed_tokenize
 from slide2study.training import mine_hard_negatives
 
@@ -42,6 +45,54 @@ class BaselineTests(unittest.TestCase):
         positive_ids = {chunk.chunk_id for chunk in self.chunks if chunk.page_start == 3}
         self.assertTrue(triplets)
         self.assertTrue(all(item.negative_chunk_id not in positive_ids for item in triplets))
+
+    def test_parse_report_flags_pages_that_need_vision(self):
+        pages = [
+            Page("deck", 1, "A complete text page " * 5),
+            Page("deck", 2, "", metadata={"image_count": 2}),
+            Page("deck", 3, "short", metadata={"image_count": 1}),
+        ]
+        report = build_parse_report(pages, low_text_threshold=20)
+        self.assertEqual(report.empty_pages, [2])
+        self.assertEqual(report.low_text_pages, [3])
+        self.assertEqual(report.requires_vision_pages, [2, 3])
+        self.assertAlmostEqual(report.to_dict()["text_coverage"], 2 / 3, places=6)
+
+    @unittest.skipUnless(importlib.util.find_spec("pptx"), "python-pptx is not installed")
+    def test_pptx_parser_extracts_title_and_table(self):
+        from pptx import Presentation
+        from pptx.util import Inches
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "lecture.pptx"
+            deck = Presentation()
+            slide = deck.slides.add_slide(deck.slide_layouts[5])
+            slide.shapes.title.text = "Optimization"
+            table = slide.shapes.add_table(2, 2, Inches(1), Inches(2), Inches(5), Inches(2)).table
+            table.cell(0, 0).text = "Method"
+            table.cell(0, 1).text = "Rate"
+            table.cell(1, 0).text = "SGD"
+            table.cell(1, 1).text = "O(1/t)"
+            deck.save(path)
+            page = PPTXParser().parse(path)[0]
+        self.assertEqual(page.title, "Optimization")
+        self.assertIn("Method | Rate", page.text)
+        self.assertIn("SGD | O(1/t)", page.text)
+        self.assertTrue(any(block["type"] == "table" for block in page.metadata["blocks"]))
+
+    @unittest.skipUnless(importlib.util.find_spec("pypdf"), "pypdf is not installed")
+    def test_pdf_parser_records_page_geometry(self):
+        from pypdf import PdfWriter
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "blank.pdf"
+            writer = PdfWriter()
+            writer.add_blank_page(width=612, height=792)
+            with path.open("wb") as stream:
+                writer.write(stream)
+            page = PDFParser().parse(path)[0]
+        self.assertEqual(page.metadata["width_points"], 612.0)
+        self.assertEqual(page.metadata["height_points"], 792.0)
 
 
 if __name__ == "__main__":

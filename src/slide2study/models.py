@@ -17,6 +17,26 @@ class Page:
 
 
 @dataclass(slots=True)
+class ParseReport:
+    document_id: str
+    page_count: int
+    nonempty_pages: int
+    total_characters: int
+    empty_pages: list[int] = field(default_factory=list)
+    low_text_pages: list[int] = field(default_factory=list)
+    image_pages: list[int] = field(default_factory=list)
+    requires_vision_pages: list[int] = field(default_factory=list)
+    warnings: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        value = asdict(self)
+        value["text_coverage"] = (
+            round(self.nonempty_pages / self.page_count, 6) if self.page_count else 0.0
+        )
+        return value
+
+
+@dataclass(slots=True)
 class Chunk:
     chunk_id: str
     document_id: str

@@ -5,6 +5,8 @@ Slide2Study 是一个面向课程 Slides/PDF 的多模态、结构感知 RAG 项
 当前版本先建立可复现的经典检索基线：
 
 - PDF、PPTX、Markdown、纯文本的页级解析
+- PPTX 阅读顺序、表格、演讲者备注与页面布局元数据
+- PDF 页面尺寸、旋转、图片数量与低文本页面诊断
 - 保留章节、页码与父子关系的分层切块
 - 无额外分词依赖的中英文混合 BM25
 - Recall@K、MRR、nDCG@K 评测
@@ -17,6 +19,7 @@ Python 3.10+：
 ```bash
 python -m pip install -e .
 slide2study ingest examples/sample_course.txt --output artifacts/sample_chunks.jsonl --max-chars 200
+slide2study inspect examples/sample_course.txt --pages-output artifacts/sample_pages.jsonl
 slide2study search artifacts/sample_chunks.jsonl "正则化为什么能降低模型复杂度" --top-k 3
 slide2study evaluate artifacts/sample_chunks.jsonl examples/retrieval_eval.jsonl --top-k 3
 slide2study mine-negatives artifacts/sample_chunks.jsonl examples/retrieval_eval.jsonl --output artifacts/train_triplets.jsonl
@@ -43,13 +46,13 @@ slide2study ingest data/raw/lecture.pdf --output artifacts/lecture_chunks.jsonl
 
 ```text
 src/slide2study/
-  parsing.py       # PDF/PPTX/TXT 页面解析
+  parsing.py       # PDF/PPTX/TXT 页面解析与质量诊断
   chunking.py      # 结构感知、页码对齐切块
   retrieval.py     # BM25 baseline 与 Dense 接口
   evaluation.py    # Recall@K / MRR / nDCG@K
   interfaces.py    # Reranker / 多模态编码 / 引用生成接口
   training.py      # BM25/Dense hard-negative mining
-  cli.py           # ingest / search / evaluate / mine-negatives
+  cli.py           # inspect / ingest / search / evaluate / mine-negatives
 ```
 
 ## 算法迭代路线
