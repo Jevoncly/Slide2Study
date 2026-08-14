@@ -39,7 +39,9 @@ class PDFParser(DocumentParser):
         try:
             from pypdf import PdfReader
         except ImportError as exc:
-            raise RuntimeError("PDF support requires: pip install 'slide2study[documents]'") from exc
+            raise RuntimeError(
+                "PDF support requires: pip install 'slide2study[documents]'"
+            ) from exc
         source = Path(path)
         _require_file(source)
         reader = PdfReader(str(source))
@@ -70,7 +72,9 @@ class PPTXParser(DocumentParser):
         try:
             from pptx import Presentation
         except ImportError as exc:
-            raise RuntimeError("PPTX support requires: pip install 'slide2study[documents]'") from exc
+            raise RuntimeError(
+                "PPTX support requires: pip install 'slide2study[documents]'"
+            ) from exc
         source = Path(path)
         _require_file(source)
         deck = Presentation(str(source))

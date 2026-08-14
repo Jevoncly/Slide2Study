@@ -28,10 +28,17 @@ class Retriever(ABC):
 
 
 class BM25Retriever(Retriever):
-    def __init__(self, chunks: list[Chunk], k1: float = 1.5, b: float = 0.75):
+    def __init__(
+        self,
+        chunks: list[Chunk],
+        k1: float = 1.5,
+        b: float = 0.75,
+        level_weights: dict[str, float] | None = None,
+    ):
         self.chunks = chunks
         self.k1 = k1
         self.b = b
+        self.level_weights = level_weights or {"section": 0.65, "page": 0.85, "passage": 1.0}
         self.term_frequencies = [Counter(mixed_tokenize(chunk.text)) for chunk in chunks]
         self.lengths = [sum(counter.values()) for counter in self.term_frequencies]
         self.avg_length = sum(self.lengths) / len(self.lengths) if self.lengths else 0.0
@@ -60,6 +67,7 @@ class BM25Retriever(Retriever):
                         frequency * (self.k1 + 1) / (frequency + self.k1 * length_norm)
                     )
             if score > 0:
+                score *= self.level_weights.get(self.chunks[index].level, 1.0)
                 scored.append((score, index))
         scored.sort(key=lambda pair: (-pair[0], self.chunks[pair[1]].chunk_id))
         return [

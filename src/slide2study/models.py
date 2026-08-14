@@ -45,6 +45,8 @@ class Chunk:
     text: str
     section: str | None = None
     parent_id: str | None = None
+    level: str = "passage"
+    child_ids: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

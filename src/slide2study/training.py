@@ -39,7 +39,7 @@ def mine_hard_negatives(
                 for chunk in chunks
                 if any(chunk.page_start <= page <= chunk.page_end for page in positive_pages)
             }
-        positive_id = next((value for value in positive_ids if value in by_id), None)
+        positive_id = next((value for value in sorted(positive_ids) if value in by_id), None)
         if positive_id is None:
             continue
         for result in retriever.search(example["query"], top_k):

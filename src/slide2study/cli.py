@@ -5,7 +5,7 @@ import json
 import sys
 from pathlib import Path
 
-from slide2study.chunking import HierarchicalChunker
+from slide2study.chunking import CHUNK_LEVELS, HierarchicalChunker
 from slide2study.evaluation import evaluate
 from slide2study.io import load_chunks, read_jsonl, write_jsonl
 from slide2study.parsing import build_parse_report, get_parser
@@ -21,8 +21,19 @@ def _print_json(value: object, *, indent: int | None = None) -> None:
     print(payload)
 
 
+def _parse_levels(value: str) -> set[str]:
+    levels = {level.strip() for level in value.split(",") if level.strip()}
+    unknown = levels - CHUNK_LEVELS
+    if not levels or unknown:
+        expected = ",".join(sorted(CHUNK_LEVELS))
+        raise argparse.ArgumentTypeError(f"levels must be a comma-separated subset of: {expected}")
+    return levels
+
+
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="slide2study", description="Slide2Study retrieval baseline")
+    parser = argparse.ArgumentParser(
+        prog="slide2study", description="Slide2Study retrieval baseline"
+    )
     commands = parser.add_subparsers(dest="command", required=True)
 
     ingest = commands.add_parser("ingest", help="Parse and chunk a PDF, PPTX, TXT or Markdown file")
@@ -40,17 +51,20 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("corpus", type=Path)
     search.add_argument("query")
     search.add_argument("--top-k", type=int, default=5)
+    search.add_argument("--levels", type=_parse_levels, default=set(CHUNK_LEVELS))
 
     evaluation = commands.add_parser("evaluate", help="Evaluate BM25 on a JSONL QA set")
     evaluation.add_argument("corpus", type=Path)
     evaluation.add_argument("dataset", type=Path)
     evaluation.add_argument("--top-k", type=int, default=5)
+    evaluation.add_argument("--levels", type=_parse_levels, default=set(CHUNK_LEVELS))
 
     mining = commands.add_parser("mine-negatives", help="Mine BM25 hard negatives for training")
     mining.add_argument("corpus", type=Path)
     mining.add_argument("dataset", type=Path)
     mining.add_argument("--output", type=Path, required=True)
     mining.add_argument("--top-k", type=int, default=20)
+    mining.add_argument("--levels", type=_parse_levels, default=set(CHUNK_LEVELS))
     return parser
 
 
@@ -70,10 +84,15 @@ def main(argv: list[str] | None = None) -> int:
         chunks = HierarchicalChunker(args.max_chars, args.overlap).chunk(pages)
         write_jsonl((chunk.to_dict() for chunk in chunks), args.output)
         report = build_parse_report(pages).to_dict()
-        report.update({"chunks": len(chunks), "output": str(args.output)})
+        level_counts = {
+            level: sum(chunk.level == level for chunk in chunks) for level in sorted(CHUNK_LEVELS)
+        }
+        report.update(
+            {"chunks": len(chunks), "chunk_levels": level_counts, "output": str(args.output)}
+        )
         _print_json(report)
         return 0
-    chunks = load_chunks(args.corpus)
+    chunks = [chunk for chunk in load_chunks(args.corpus) if chunk.level in args.levels]
     retriever = BM25Retriever(chunks)
     if args.command == "search":
         results = retriever.search(args.query, args.top_k)

@@ -33,7 +33,10 @@ def evaluate(retriever: Retriever, examples: list[dict], top_k: int = 5) -> Eval
         relevance = [
             int(
                 result.chunk.chunk_id in relevant
-                or any(result.chunk.page_start <= page <= result.chunk.page_end for page in relevant_pages)
+                or any(
+                    result.chunk.page_start <= page <= result.chunk.page_end
+                    for page in relevant_pages
+                )
             )
             for result in results
         ]
