@@ -75,9 +75,12 @@ Top chunk 诊断。融合参数必须只在 dev 上选择；如果 test 未超�
 单路作为默认检索器。
 `dense-mine-negatives` 从缓存 Dense 排名中生成 query-positive-negative triplet，并将页级
 正例映射到同文档 passage，防止层级过滤后把相关 passage 误标为负例。
+同一相关页存在多个 passage 时，以检索排名最高的相关 passage 作为代表正例，其他同页
+passage 仍全部排除出负例。
 负例按原始排名划分为 hard（1–5）、medium（6–10）和 easy（11+），可设置每题配额。
 `build-negative-review-pack` 生成仅在本机使用的交互式 HTML，支持标记有效负例、假负例或
 不确定，并导出带人工决定和备注的 JSONL。
+审阅数据带内容指纹；重新生成内容后会使用新的浏览器本地进度空间，避免旧决定错配。
 
 每条检索结果都包含基于文件内容 SHA-256 生成的稳定 `document_id`、`page_start`、
 `page_end`、`section` 和稳定的 `chunk_id`，可直接作为引用生成的 evidence。原始文件名保存在

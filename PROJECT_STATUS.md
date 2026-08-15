@@ -8,11 +8,11 @@
 - 课程测试数据：`D:\important files\Unimelb\S1`
 - GitHub：<https://github.com/Jevoncly/Slide2Study>
 - 当前分支：`agent/document-parsing`
-- 上一阶段提交：`7aaafac Add dense fusion and hard negative mining`
+- 上一阶段提交：`4bd1270 Add balanced negative review workflow`
 - 远程跟踪分支：`origin/agent/document-parsing`
 - Draft PR：<https://github.com/Jevoncly/Slide2Study/pull/1>
 
-远程分支已推送至 `7aaafac`；本阶段负例分层与审阅工作尚未推送。
+远程分支已推送至 `7aaafac`；`4bd1270` 及本阶段正例映射修复尚未推送。
 
 ## 2. 项目目标
 
@@ -162,12 +162,17 @@ multimodal page retriever。
 - `build-negative-review-pack` 展示 query、正例、候选负例、页码、rank、难度和 miner，支持
   有效负例、假负例、不确定三种决定、备注、本地进度和 JSONL 导出。
 - 本地审阅包 60/60 条可解析、缺失 chunk 0；导出脚本已通过 JavaScript 语法检查。
+- 修复同一相关页有多个 passage 时按 chunk ID 误选代表正例的问题：现在选择检索排名最高的
+  相关 passage，同时继续排除该页全部 passage，防止进入负例。
+- IPv4 最大 datagram 长度案例的正例已从仅含 fragment offset 的 passage 修正为包含
+  `65,535 bytes including header and payload` 的 passage。
+- 审阅包使用内容 SHA-256 指纹隔离浏览器本地进度，修正后的数据不会继承旧版审阅决定。
 
 ## 4. 验证证据
 
 ### 4.1 自动化测试
 
-- 当前测试：36/36 通过；Ruff 检查通过。
+- 当前测试：37/37 通过；Ruff 检查通过。
 - 测试覆盖：解析、质量诊断、三层 chunk、层级校验、BM25、评测指标、hard negatives、
   页面清单、PDF/PPTX 渲染流程、向量缓存及哈希校验、视觉页面排序、页面级评测、
   BM25 页面映射、页面/chunk 加权 RRF、逐题诊断、Dense 排序、chunk 缓存及文本哈希校验、

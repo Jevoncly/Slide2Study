@@ -47,11 +47,23 @@ def mine_hard_negatives(
             if (document_id is None or chunk.document_id == document_id)
             and any(chunk.page_start <= page <= chunk.page_end for page in positive_pages)
         )
-        positive_id = next((value for value in sorted(positive_ids) if value in by_id), None)
+        ranked_results = retriever.search(example["query"], max(top_k, len(chunks)))
+        positive_id = next(
+            (
+                result.chunk.chunk_id
+                for result in ranked_results
+                if result.chunk.chunk_id in positive_ids
+            ),
+            None,
+        )
+        if positive_id is None:
+            positive_id = next((value for value in sorted(positive_ids) if value in by_id), None)
         if positive_id is None:
             continue
         selected_by_difficulty = {"hard": 0, "medium": 0, "easy": 0}
-        for result in retriever.search(example["query"], top_k):
+        for result in ranked_results:
+            if result.rank > top_k:
+                break
             if result.chunk.chunk_id in positive_ids:
                 continue
             difficulty = _negative_difficulty(result.rank)

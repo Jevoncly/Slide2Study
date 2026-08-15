@@ -325,6 +325,28 @@ class BaselineTests(unittest.TestCase):
         self.assertEqual(triplets[0].miner, "dense:test")
         self.assertEqual(triplets[0].difficulty, "hard")
 
+    def test_hard_negative_mining_selects_best_ranked_passage_on_relevant_page(self):
+        correct = Chunk("correct", "deck", 4, 4, "65,535 bytes including header and payload")
+        irrelevant = Chunk("irrelevant", "deck", 4, 4, "fragment offset")
+        negative = Chunk("negative", "deck", 3, 3, "header has a fixed and optional part")
+        chunks = [correct, irrelevant, negative]
+        triplets = mine_hard_negatives(
+            StaticRetriever(chunks),
+            [
+                {
+                    "query": "What is the maximum datagram length?",
+                    "document_id": "deck",
+                    "relevant_chunk_ids": ["page-node-4"],
+                    "relevant_pages": [4],
+                }
+            ],
+            chunks,
+            top_k=3,
+        )
+        self.assertEqual(len(triplets), 1)
+        self.assertEqual(triplets[0].positive_chunk_id, "correct")
+        self.assertEqual(triplets[0].negative_chunk_id, "negative")
+
     def test_hard_negative_mining_applies_difficulty_quotas(self):
         chunks = [
             Chunk(f"chunk-{index}", "deck", index, index, f"text {index}")
@@ -364,6 +386,8 @@ class BaselineTests(unittest.TestCase):
             html = output.read_text(encoding="utf-8")
         self.assertEqual(summary["reviewable"], 1)
         self.assertEqual(summary["difficulties"], {"hard": 1})
+        self.assertEqual(len(summary["fingerprint"]), 12)
+        self.assertIn(summary["fingerprint"], html)
         self.assertIn("Slide2Study 困难负例复核", html)
         self.assertIn("false_negative", html)
 

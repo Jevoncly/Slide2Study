@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 from collections import Counter
 from pathlib import Path
@@ -34,12 +35,14 @@ def build_negative_review_pack(
     target = Path(output)
     target.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(rows, ensure_ascii=False).replace("</", "<\\/")
-    target.write_text(_review_html(payload), encoding="utf-8")
+    fingerprint = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:12]
+    target.write_text(_review_html(payload, fingerprint), encoding="utf-8")
     return {
         "triplets": len(triplets),
         "reviewable": len(rows),
         "missing_chunks": sorted(missing_chunks),
         "difficulties": dict(Counter(row.get("difficulty", "unlabeled") for row in rows)),
+        "fingerprint": fingerprint,
         "output": str(target),
     }
 
@@ -55,7 +58,7 @@ def _chunk_preview(chunk: Chunk) -> dict:
     }
 
 
-def _review_html(payload: str) -> str:
+def _review_html(payload: str, fingerprint: str) -> str:
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width">
 <title>Slide2Study 困难负例复核</title><style>
@@ -71,7 +74,7 @@ textarea{{width:100%;min-height:52px;box-sizing:border-box;margin-top:8px}}
 @media(max-width:760px){{.pair{{grid-template-columns:1fr}}}}
 </style></head><body><header><button id="export">导出复核 JSONL</button>
 <button id="show-pending">仅看未复核</button><span id="summary"></span></header><main id="cards"></main>
-<script>const rows={payload}; const key='slide2study-negative-review-v1';
+<script>const rows={payload}; const key='slide2study-negative-review-v1-{fingerprint}';
 const saved=JSON.parse(localStorage.getItem(key)||'{{}}'); const cards=document.getElementById('cards');
 function persist(){{localStorage.setItem(key,JSON.stringify(saved)); update();}}
 function update(){{const done=Object.values(saved).filter(x=>x.decision).length;
