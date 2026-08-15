@@ -57,7 +57,7 @@ class Chunk:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, value: dict[str, Any]) -> "Chunk":
+    def from_dict(cls, value: dict[str, Any]) -> Chunk:
         return cls(**value)
 
 
@@ -88,7 +88,7 @@ class RenderedPage:
         return asdict(self)
 
     @classmethod
-    def from_dict(cls, value: dict[str, Any]) -> "RenderedPage":
+    def from_dict(cls, value: dict[str, Any]) -> RenderedPage:
         return cls(**value)
 
 

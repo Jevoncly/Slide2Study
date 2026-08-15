@@ -133,7 +133,7 @@ def _starts_section(page: Page, heading: str | None) -> bool:
         r"^第[0-9一二三四五六七八九十百]+[章节篇单元]",
         r"^(chapter|unit|module|part)\s+[0-9ivx]+\b",
     )
-    return any(re.search(pattern, normalized, flags=re.I) for pattern in patterns)
+    return any(re.search(pattern, normalized, flags=re.IGNORECASE) for pattern in patterns)
 
 
 def _detect_heading(page: Page) -> str | None:

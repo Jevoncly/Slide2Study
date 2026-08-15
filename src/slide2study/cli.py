@@ -7,7 +7,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from slide2study.chunking import CHUNK_LEVELS, HierarchicalChunker
-from slide2study.evaluation import DATASET_SPLITS, evaluate, validate_dataset
+from slide2study.evaluation import (
+    DATASET_SPLITS,
+    evaluate,
+    evaluate_page_retrieval,
+    validate_dataset,
+)
 from slide2study.io import load_chunks, read_jsonl, write_jsonl
 from slide2study.parsing import build_parse_report, get_parser
 from slide2study.retrieval import BM25Retriever
@@ -16,8 +21,10 @@ from slide2study.training import mine_hard_negatives
 from slide2study.vision import (
     SentenceTransformersCLIPEncoder,
     VisualPageRetriever,
+    load_page_embedding_cache,
     load_page_manifest,
     render_document,
+    write_page_embedding_cache,
     write_page_manifest,
 )
 
@@ -50,6 +57,14 @@ def _expand_paths(values: list[Path]) -> list[Path]:
         else:
             expanded.append(value)
     return expanded
+
+
+def _load_rendered_pages(manifests: list[Path]):
+    pages = [page for manifest in _expand_paths(manifests) for page in load_page_manifest(manifest)]
+    keys = [(page.document_id, page.page_number) for page in pages]
+    if len(keys) != len(set(keys)):
+        raise ValueError("Rendered page manifests contain duplicate document/page entries")
+    return pages
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -95,7 +110,31 @@ def build_parser() -> argparse.ArgumentParser:
     visual_search.add_argument("--top-k", type=int, default=5)
     visual_search.add_argument("--model", default="clip-ViT-B-32")
     visual_search.add_argument("--device")
+    visual_search.add_argument("--batch-size", type=int, default=16)
     visual_search.add_argument("--only-vision", action="store_true")
+
+    visual_index = commands.add_parser(
+        "visual-index", help="Encode rendered pages once and save a verified CLIP cache"
+    )
+    visual_index.add_argument("--manifests", nargs="+", type=Path, required=True)
+    visual_index.add_argument("--output", type=Path, required=True)
+    visual_index.add_argument("--model", default="clip-ViT-B-32")
+    visual_index.add_argument("--device")
+    visual_index.add_argument("--batch-size", type=int, default=16)
+
+    visual_evaluation = commands.add_parser(
+        "visual-evaluate", help="Evaluate cached CLIP query-to-page retrieval"
+    )
+    visual_evaluation.add_argument("corpus", type=Path)
+    visual_evaluation.add_argument("dataset", type=Path)
+    visual_evaluation.add_argument("--manifests", nargs="+", type=Path, required=True)
+    visual_evaluation.add_argument("--cache", type=Path, required=True)
+    visual_evaluation.add_argument("--model")
+    visual_evaluation.add_argument("--device")
+    visual_evaluation.add_argument("--batch-size", type=int, default=16)
+    visual_evaluation.add_argument("--top-k", type=int, default=5)
+    visual_evaluation.add_argument("--split", choices=sorted(DATASET_SPLITS))
+    visual_evaluation.add_argument("--output", type=Path)
 
     search = commands.add_parser("search", help="Search a chunk corpus with BM25")
     search.add_argument("corpus", type=Path)
@@ -179,9 +218,76 @@ def main(argv: list[str] | None = None) -> int:
             rendered_pages = [page for page in rendered_pages if page.requires_vision]
         if not rendered_pages:
             raise ValueError("The page manifest has no eligible pages")
-        encoder = SentenceTransformersCLIPEncoder(args.model, args.device)
+        encoder = SentenceTransformersCLIPEncoder(args.model, args.device, args.batch_size)
         results = VisualPageRetriever(rendered_pages, encoder).search(args.query, args.top_k)
         _print_json([result.to_dict() for result in results], indent=2)
+        return 0
+    if args.command == "visual-index":
+        rendered_pages = _load_rendered_pages(args.manifests)
+        if not rendered_pages:
+            raise ValueError("The page manifests contain no pages")
+        encoder = SentenceTransformersCLIPEncoder(args.model, args.device, args.batch_size)
+        embeddings = encoder.encode_pages([page.image_path for page in rendered_pages])
+        write_page_embedding_cache(rendered_pages, embeddings, args.output, args.model)
+        _print_json(
+            {
+                "model": args.model,
+                "pages": len(rendered_pages),
+                "dimensions": len(embeddings[0]) if embeddings else 0,
+                "output": str(args.output),
+            },
+            indent=2,
+        )
+        return 0
+    if args.command == "visual-evaluate":
+        rendered_pages = _load_rendered_pages(args.manifests)
+        embeddings, cached_model = load_page_embedding_cache(
+            rendered_pages, args.cache, args.model
+        )
+        model_name = args.model or cached_model
+        encoder = SentenceTransformersCLIPEncoder(model_name, args.device, args.batch_size)
+        retriever = VisualPageRetriever(rendered_pages, encoder, embeddings)
+        corpus_chunks = load_chunks(args.corpus)
+        examples = list(read_jsonl(args.dataset))
+        validation = validate_dataset(
+            examples,
+            require_question_types=True,
+            require_splits=True,
+            require_document_ids=True,
+            require_annotation_statuses=True,
+            chunks=corpus_chunks,
+        )
+        evaluation_examples = (
+            [example for example in examples if example.get("split") == args.split]
+            if args.split
+            else examples
+        )
+        if not evaluation_examples:
+            raise ValueError(f"The dataset has no examples in split {args.split!r}")
+        report = {
+            "experiment": {
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "retriever": "clip-page",
+                "model": model_name,
+                "top_k": args.top_k,
+                "split": args.split or "all",
+                "evaluated_queries": len(evaluation_examples),
+                "manifests": [str(path.resolve()) for path in _expand_paths(args.manifests)],
+                "cache": str(args.cache.resolve()),
+                "dataset": str(args.dataset.resolve()),
+            },
+            "dataset": validation.to_dict(),
+            "metrics": evaluate_page_retrieval(
+                retriever, evaluation_examples, args.top_k
+            ).to_dict(),
+        }
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(
+                json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+            report["output"] = str(args.output)
+        _print_json(report, indent=2)
         return 0
     if args.command == "inspect":
         pages = get_parser(args.document).parse(args.document)
@@ -218,10 +324,7 @@ def main(argv: list[str] | None = None) -> int:
             require_annotation_statuses=True,
             chunks=review_chunks,
         )
-        manifest_paths = _expand_paths(args.manifests)
-        rendered_pages = [
-            page for manifest in manifest_paths for page in load_page_manifest(manifest)
-        ]
+        rendered_pages = _load_rendered_pages(args.manifests)
         _print_json(
             build_review_pack(review_examples, review_chunks, args.output, rendered_pages),
             indent=2,

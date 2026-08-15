@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 import re
 import shutil
 import subprocess
 import tempfile
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 from slide2study.identifiers import stable_document_id
 from slide2study.interfaces import MultimodalPageEncoder
@@ -84,7 +85,14 @@ def load_page_manifest(path: str | Path) -> list[RenderedPage]:
 class SentenceTransformersCLIPEncoder(MultimodalPageEncoder):
     """Pretrained cross-modal baseline using the SentenceTransformers CLIP model."""
 
-    def __init__(self, model_name: str = "clip-ViT-B-32", device: str | None = None):
+    def __init__(
+        self,
+        model_name: str = "clip-ViT-B-32",
+        device: str | None = None,
+        batch_size: int = 16,
+    ):
+        if batch_size < 1:
+            raise ValueError("batch_size must be at least 1")
         try:
             from sentence_transformers import SentenceTransformer
         except ImportError as exc:
@@ -92,6 +100,7 @@ class SentenceTransformersCLIPEncoder(MultimodalPageEncoder):
                 "Visual encoding requires: pip install 'slide2study[vision]'"
             ) from exc
         self.model_name = model_name
+        self.batch_size = batch_size
         self.model = SentenceTransformer(model_name, device=device)
 
     def encode_pages(self, image_paths: list[str]) -> list[list[float]]:
@@ -101,18 +110,87 @@ class SentenceTransformersCLIPEncoder(MultimodalPageEncoder):
             raise RuntimeError(
                 "Visual encoding requires: pip install 'slide2study[vision]'"
             ) from exc
-        images = []
-        for path in image_paths:
-            with Image.open(path) as image:
-                images.append(image.convert("RGB").copy())
-        return _as_float_vectors(
-            self.model.encode(images, normalize_embeddings=True, show_progress_bar=False)
-        )
+        vectors = []
+        for offset in range(0, len(image_paths), self.batch_size):
+            images = []
+            for path in image_paths[offset : offset + self.batch_size]:
+                with Image.open(path) as image:
+                    images.append(image.convert("RGB").copy())
+            encoded = self.model.encode(
+                images,
+                batch_size=self.batch_size,
+                normalize_embeddings=True,
+                show_progress_bar=False,
+            )
+            vectors.extend(_as_float_vectors(encoded))
+        return vectors
 
     def encode_queries(self, queries: list[str]) -> list[list[float]]:
         return _as_float_vectors(
-            self.model.encode(queries, normalize_embeddings=True, show_progress_bar=False)
+            self.model.encode(
+                queries,
+                batch_size=self.batch_size,
+                normalize_embeddings=True,
+                show_progress_bar=False,
+            )
         )
+
+
+def write_page_embedding_cache(
+    pages: Sequence[RenderedPage],
+    embeddings: Sequence[Sequence[float]],
+    path: str | Path,
+    model_name: str,
+) -> None:
+    vectors = _validate_and_normalize(embeddings, len(pages))
+    payload = {
+        "format": "slide2study-page-embeddings-v1",
+        "model": model_name,
+        "dimensions": len(vectors[0]) if vectors else 0,
+        "pages": [
+            {
+                "document_id": page.document_id,
+                "page_number": page.page_number,
+                "image_sha256": page.sha256,
+                "embedding": vector,
+            }
+            for page, vector in zip(pages, vectors)
+        ],
+    }
+    target = Path(path)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(json.dumps(payload, separators=(",", ":")) + "\n", encoding="utf-8")
+
+
+def load_page_embedding_cache(
+    pages: Sequence[RenderedPage], path: str | Path, model_name: str | None = None
+) -> tuple[list[list[float]], str]:
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    if payload.get("format") != "slide2study-page-embeddings-v1":
+        raise ValueError("Unsupported page embedding cache format")
+    cached_model = payload.get("model")
+    if not isinstance(cached_model, str) or not cached_model:
+        raise ValueError("Page embedding cache has no model name")
+    if model_name is not None and cached_model != model_name:
+        raise ValueError(f"Embedding cache model is {cached_model!r}, expected {model_name!r}")
+    records = {
+        (record.get("document_id"), record.get("page_number")): record
+        for record in payload.get("pages", [])
+    }
+    vectors = []
+    for page in pages:
+        key = (page.document_id, page.page_number)
+        record = records.get(key)
+        if record is None:
+            raise ValueError(
+                f"Embedding cache is missing page {page.document_id} p.{page.page_number}"
+            )
+        if record.get("image_sha256") != page.sha256:
+            raise ValueError(
+                f"Embedding cache image mismatch for {page.document_id} p.{page.page_number}"
+            )
+        vectors.append(record.get("embedding"))
+    return _validate_and_normalize(vectors, len(pages)), cached_model
 
 
 class VisualPageRetriever:

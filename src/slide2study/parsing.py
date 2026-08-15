@@ -24,7 +24,7 @@ class TextParser(DocumentParser):
         _require_file(source)
         raw = source.read_text(encoding="utf-8")
         document_id = stable_document_id(source)
-        parts = re.split(r"\f|^\s*---\s*page\s*---\s*$", raw, flags=re.I | re.M)
+        parts = re.split(r"\f|^\s*---\s*page\s*---\s*$", raw, flags=re.IGNORECASE | re.MULTILINE)
         return [
             Page(
                 document_id,
@@ -316,7 +316,7 @@ def _require_file(path: Path) -> None:
 def _pdf_image_count(pdf_page: object) -> int:
     try:
         return len(pdf_page.images)  # type: ignore[attr-defined]
-    except Exception:
+    except Exception:  # noqa: BLE001 - pypdf image decoding can fail broadly.
         return 0
 
 

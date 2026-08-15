@@ -8,11 +8,11 @@
 - 课程测试数据：`D:\important files\Unimelb\S1`
 - GitHub：<https://github.com/Jevoncly/Slide2Study>
 - 当前分支：`agent/document-parsing`
-- 上一阶段提交：`7bde05e Add reproducible retrieval evaluation reports`
+- 上一阶段提交：`072553f Add private QA review workflow`
 - 远程跟踪分支：`origin/agent/document-parsing`
 - Draft PR：<https://github.com/Jevoncly/Slide2Study/pull/1>
 
-`7bde05e` 尚未推送；本阶段在此基线上推进真实多课程 pilot。
+远程分支已包含多文档 pilot 提交 `bb4dbb2`；`072553f` 及本阶段工作尚未推送。
 
 ## 2. 项目目标
 
@@ -66,8 +66,10 @@ multimodal page retriever。
 - JSONL 清单记录文档、页码、图片绝对路径、尺寸、SHA-256、页面角色和视觉风险。
 - `MultimodalPageEncoder` 提供页面图像编码和文本问题编码接口。
 - `SentenceTransformersCLIPEncoder` 提供 `clip-ViT-B-32` 基线。
+- 页面编码支持可配置批大小，避免一次加载全部课件图片。
 - `VisualPageRetriever` 使用归一化向量和余弦相似度实现 query-to-page 检索。
-- CLI：`render-pages`、`visual-search`，支持 `--only-vision`。
+- 页面向量缓存记录模型、文档、页码、图片 SHA-256 和归一化向量；加载时校验模型和图片内容。
+- CLI：`render-pages`、`visual-search`、`visual-index`、`visual-evaluate`。
 
 主要代码：`src/slide2study/vision.py`、`src/slide2study/interfaces.py`、
 `src/slide2study/cli.py`。
@@ -102,13 +104,22 @@ multimodal page retriever。
 - 四课程 pilot 审阅包包含 28 条 QA、30 个证据引用、28 张去重图片，缺图 0。
 - 审阅 HTML、图片和课程数据均位于 `artifacts/`，不会进入 Git。
 
+### 3.8 真实 CLIP 候选基线
+
+- 已安装 SentenceTransformers、Torch 和 `clip-ViT-B-32` 权重；当前 Torch 为 CPU 版本。
+- 四课程共 131 页已生成 512 维页面向量缓存，并通过模型名、页码与图片 SHA-256 校验。
+- 候选 test split（9 条）CLIP：Recall@5 0.6667、MRR 0.5556、nDCG@5 0.5257。
+- 同一候选 test split 的 passage-only BM25：Recall@5 0.8889、MRR 0.8333、nDCG@5 0.8091。
+- 当前结果仅证明真实视觉基线与可复现实验链路可运行；候选标注未人工确认，不能作为正式模型结论。
+
 ## 4. 验证证据
 
 ### 4.1 自动化测试
 
-- 当前测试：26/26 通过。
+- 当前测试：29/29 通过；Ruff 检查通过。
 - 测试覆盖：解析、质量诊断、三层 chunk、层级校验、BM25、评测指标、hard negatives、
-  页面清单、PDF/PPTX 渲染流程、向量校验、视觉页面排序、评测集校验及分类型报告。
+  页面清单、PDF/PPTX 渲染流程、向量缓存及哈希校验、视觉页面排序、页面级评测、
+  评测集校验及分类型报告。
 
 运行：
 
@@ -146,8 +157,7 @@ python -m unittest discover -s tests -v
 
 ## 5. 当前限制
 
-- 当前运行环境没有安装 SentenceTransformers、Torch 和 CLIP 权重；CLIP 适配器已经实现，
-  检索数学与接口由确定性假编码器测试，但尚未用真实 CLIP 权重生成课件指标。
+- 当前 Torch 为 CPU 版本；真实 CLIP 可以运行，但页面首次编码速度尚未获得 GPU 加速。
 - 当前机器没有 LibreOffice；PPTX 转换路径已由自动化测试覆盖，但只对 PDF 做过真实渲染。
 - 已有四门课 28 条机器辅助候选 QA，但尚未人工复核，不能作为正式测试集或可靠消融结论。
 - 尚未实现 Dense Text Retriever、Hybrid Retrieval、Reranker 训练和多模态对比学习。
@@ -178,6 +188,8 @@ slide2study inspect "D:\path\lecture.pdf"
 slide2study ingest "D:\path\lecture.pdf" --output artifacts\lecture_chunks.jsonl
 slide2study render-pages "D:\path\lecture.pdf" --output-dir artifacts\pages
 slide2study visual-search artifacts\pages\lecture.jsonl "Which diagram shows IPv6 fields?" --top-k 5
+slide2study visual-index --manifests artifacts\pages\*.jsonl --output artifacts\page_embeddings.json
+slide2study visual-evaluate artifacts\course_chunks.jsonl data\private\eval.jsonl --manifests artifacts\pages\*.jsonl --cache artifacts\page_embeddings.json --split test --top-k 5 --output artifacts\clip_report.json
 ```
 
 `artifacts/` 和 `data/raw/` 已被 Git 忽略。不要把墨尔本大学课件原文件提交到公开仓库。
@@ -186,11 +198,10 @@ slide2study visual-search artifacts\pages\lecture.jsonl "Which diagram shows IPv
 
 1. 从 3-5 门课程建立人工校验的 QA 数据集，每门先做 30-50 条。
 2. 区分 text、formula、table/chart、visual-only、cross-page 五类问题。
-3. 安装并运行真实 CLIP baseline，保存 Recall@K、MRR、nDCG、延迟和失败案例。
-4. 为页面向量增加缓存，避免每次查询重新编码图片。
-5. 实现 Dense Text Retriever 和 BM25 + Dense/Visual Hybrid Retrieval。
-6. 挖掘 hard negatives 并微调 Reranker。
-7. 完成纯文本与视觉检索消融，然后再接带引用生成。
+3. 记录 BM25 与 CLIP 的逐问题失败案例，为融合规则提供依据。
+4. 实现 Dense Text Retriever 和 BM25 + Dense/Visual Hybrid Retrieval。
+5. 挖掘 hard negatives 并微调 Reranker。
+6. 完成纯文本与视觉检索消融，然后再接带引用生成。
 
 短期最重要的不是继续堆功能，而是先获得可信的评测集和 baseline 数字。
 
@@ -213,5 +224,5 @@ git log -3 --oneline --decorate
 python -m unittest discover -s tests -v
 ```
 
-预期分支是 `agent/document-parsing`，基线提交是 `3e71ae9`。如果本文档后续被提交，
+预期分支是 `agent/document-parsing`，最近已完成里程碑是 `072553f`。如果本文档后续被提交，
 则以更新后的 HEAD 为准。

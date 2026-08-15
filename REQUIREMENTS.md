@@ -161,6 +161,9 @@ Slide2Study 是一个面向算法工程师求职展示的多模态、结构感�
 
 ### 13. 多模态训练
 
+- [x] 缓存页面图像向量并校验模型与图片版本
+- [x] 与 BM25 使用同一套页面级评测指标和报告结构
+- [x] 运行真实零样本 CLIP 候选 baseline
 - [ ] 构建 query-page 正样本
 - [ ] 使用对比学习训练
 - [ ] 加入图表和公式 hard negatives
@@ -259,4 +262,5 @@ Slide2Study 是一个面向算法工程师求职展示的多模态、结构感�
 8. 实现带引用生成
 9. 完成 UI、实验报告和项目展示
 
-当前下一项：建立 3–5 门课程的人工校验 QA 数据集，并运行 BM25 与真实 CLIP baseline。
+当前下一项：人工复核并扩充 3–5 门课程 QA，记录 BM25/CLIP 失败案例，再实现 Dense Text 与
+BM25 + Dense/Visual Hybrid Retrieval。

@@ -9,7 +9,6 @@ from typing import Any
 from slide2study.models import Chunk
 from slide2study.retrieval import Retriever
 
-
 QUESTION_TYPES = frozenset({"text", "formula", "table_chart", "visual_only", "cross_page"})
 DATASET_SPLITS = frozenset({"train", "dev", "test"})
 ANNOTATION_STATUSES = frozenset({"candidate", "verified"})
@@ -297,6 +296,44 @@ def evaluate(retriever: Retriever, examples: list[dict], top_k: int = 5) -> Eval
         # A page label can make several hierarchy levels relevant. Include those
         # observed relevant chunks so mixed-level nDCG remains bounded by 1.
         ideal_hits = min(top_k, max(1, len(relevant), len(relevant_pages), sum(relevance)))
+        idcg = sum(1.0 / math.log2(rank + 1) for rank in range(1, ideal_hits + 1))
+        query_metrics.append(
+            _QueryMetrics(
+                question_type=example.get("question_type", "unlabeled"),
+                recall=float(any(relevance)),
+                precision=sum(relevance) / top_k,
+                reciprocal_rank=1.0 / first if first else 0.0,
+                ndcg=dcg / idcg if idcg else 0.0,
+                no_result=float(not results),
+                latency_ms=latency_ms,
+            )
+        )
+    return _summarize(query_metrics, include_types=True)
+
+
+def evaluate_page_retrieval(
+    retriever: Any, examples: list[dict], top_k: int = 5
+) -> EvaluationSummary:
+    """Evaluate query-to-page retrieval with the same aggregate report schema."""
+    if top_k < 1:
+        raise ValueError("top_k must be at least 1")
+    query_metrics: list[_QueryMetrics] = []
+    for example in examples:
+        relevant_pages = {int(page) for page in example.get("relevant_pages", [])}
+        expected_document = example.get("document_id")
+        started = time.perf_counter_ns()
+        results = retriever.search(example["query"], top_k)
+        latency_ms = (time.perf_counter_ns() - started) / 1_000_000
+        relevance = [
+            int(
+                result.page.document_id == expected_document
+                and result.page.page_number in relevant_pages
+            )
+            for result in results
+        ]
+        first = next((rank for rank, hit in enumerate(relevance, 1) if hit), None)
+        dcg = sum(hit / math.log2(rank + 1) for rank, hit in enumerate(relevance, 1))
+        ideal_hits = min(top_k, max(1, len(relevant_pages)))
         idcg = sum(1.0 / math.log2(rank + 1) for rank in range(1, ideal_hits + 1))
         query_metrics.append(
             _QueryMetrics(

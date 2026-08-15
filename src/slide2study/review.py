@@ -3,8 +3,9 @@ from __future__ import annotations
 import hashlib
 import json
 import shutil
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any
 
 from slide2study.models import Chunk, RenderedPage
 

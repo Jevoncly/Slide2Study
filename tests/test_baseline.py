@@ -9,7 +9,7 @@ from unittest.mock import patch
 
 from slide2study.chunking import HierarchicalChunker, validate_chunk_hierarchy
 from slide2study.cli import main as cli_main
-from slide2study.evaluation import evaluate, validate_dataset
+from slide2study.evaluation import evaluate, evaluate_page_retrieval, validate_dataset
 from slide2study.identifiers import stable_document_id
 from slide2study.interfaces import MultimodalPageEncoder
 from slide2study.io import write_jsonl
@@ -26,16 +26,20 @@ from slide2study.review import build_review_pack
 from slide2study.training import mine_hard_negatives
 from slide2study.vision import (
     VisualPageRetriever,
+    load_page_embedding_cache,
     load_page_manifest,
     render_document,
+    write_page_embedding_cache,
     write_page_manifest,
 )
-
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 class FakeMultimodalEncoder(MultimodalPageEncoder):
+    def __init__(self, *_args, **_kwargs):
+        pass
+
     def encode_pages(self, image_paths: list[str]) -> list[list[float]]:
         return [[1.0, 0.0], [0.0, 1.0]][: len(image_paths)]
 
@@ -344,6 +348,114 @@ class BaselineTests(unittest.TestCase):
         results = VisualPageRetriever(pages, FakeMultimodalEncoder()).search("diagram", 2)
         self.assertEqual([result.page.page_number for result in results], [2, 1])
         self.assertEqual(results[0].score, 1.0)
+
+    def test_visual_evaluation_uses_document_scoped_page_labels(self):
+        pages = [
+            RenderedPage("deck-a", 1, "page-1.png", "a.pdf", 100, 80, "a"),
+            RenderedPage("deck-b", 2, "page-2.png", "b.pdf", 100, 80, "b"),
+        ]
+        retriever = VisualPageRetriever(pages, FakeMultimodalEncoder())
+        summary = evaluate_page_retrieval(
+            retriever,
+            [
+                {
+                    "query": "diagram",
+                    "document_id": "deck-b",
+                    "relevant_pages": [2],
+                    "question_type": "visual_only",
+                }
+            ],
+            top_k=2,
+        )
+        self.assertEqual(summary.recall_at_k, 1.0)
+        self.assertEqual(summary.mrr, 1.0)
+
+    def test_page_embedding_cache_checks_model_and_image_hash(self):
+        page = RenderedPage("deck", 1, "page.png", "deck.pdf", 100, 80, "abc")
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "embeddings.json"
+            write_page_embedding_cache([page], [[3.0, 4.0]], cache, "fake-clip")
+            embeddings, model = load_page_embedding_cache([page], cache, "fake-clip")
+            self.assertEqual(model, "fake-clip")
+            self.assertAlmostEqual(embeddings[0][0], 0.6)
+            changed = RenderedPage("deck", 1, "page.png", "deck.pdf", 100, 80, "changed")
+            with self.assertRaisesRegex(ValueError, "image mismatch"):
+                load_page_embedding_cache([changed], cache)
+            with self.assertRaisesRegex(ValueError, "expected 'other-model'"):
+                load_page_embedding_cache([page], cache, "other-model")
+
+    def test_visual_index_and_evaluate_cli_reuse_page_cache(self):
+        page_chunk = next(chunk for chunk in self.chunks if chunk.level == "page")
+        example = {
+            "id": "visual-q1",
+            "query": "diagram",
+            "document_id": page_chunk.document_id,
+            "relevant_pages": [page_chunk.page_start],
+            "relevant_chunk_ids": [page_chunk.chunk_id],
+            "question_type": "visual_only",
+            "split": "test",
+            "annotation_status": "verified",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            manifest = root / "pages.jsonl"
+            corpus = root / "corpus.jsonl"
+            dataset = root / "dataset.jsonl"
+            cache = root / "embeddings.json"
+            report_path = root / "report.json"
+            page = RenderedPage(
+                page_chunk.document_id,
+                page_chunk.page_start,
+                str(root / "page.png"),
+                "lecture.pdf",
+                100,
+                80,
+                "image-hash",
+            )
+            write_page_manifest([page], manifest)
+            write_jsonl((chunk.to_dict() for chunk in self.chunks), corpus)
+            write_jsonl([example], dataset)
+            with patch(
+                "slide2study.cli.SentenceTransformersCLIPEncoder",
+                FakeMultimodalEncoder,
+            ), redirect_stdout(io.StringIO()):
+                self.assertEqual(
+                    cli_main(
+                        [
+                            "visual-index",
+                            "--manifests",
+                            str(manifest),
+                            "--output",
+                            str(cache),
+                            "--model",
+                            "fake-clip",
+                        ]
+                    ),
+                    0,
+                )
+                self.assertEqual(
+                    cli_main(
+                        [
+                            "visual-evaluate",
+                            str(corpus),
+                            str(dataset),
+                            "--manifests",
+                            str(manifest),
+                            "--cache",
+                            str(cache),
+                            "--split",
+                            "test",
+                            "--top-k",
+                            "1",
+                            "--output",
+                            str(report_path),
+                        ]
+                    ),
+                    0,
+                )
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+        self.assertEqual(report["experiment"]["model"], "fake-clip")
+        self.assertEqual(report["metrics"]["recall_at_k"], 1.0)
 
     def test_page_manifest_round_trip(self):
         page = RenderedPage(

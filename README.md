@@ -46,11 +46,16 @@ slide2study ingest data/raw/lecture.pdf --output artifacts/lecture_chunks.jsonl
 python -m pip install -e ".[documents,vision]"
 slide2study render-pages data/raw/lecture.pdf --output-dir artifacts/pages
 slide2study visual-search artifacts/pages/lecture.jsonl "IPv6 header fields" --top-k 5
+slide2study visual-index --manifests artifacts/pages/*.jsonl --output artifacts/page_embeddings.json
+slide2study visual-evaluate artifacts/course_chunks.jsonl data/private/eval.jsonl --manifests artifacts/pages/*.jsonl --cache artifacts/page_embeddings.json --split test --top-k 5 --output artifacts/clip_report.json
 ```
 
 `render-pages` 为每页生成稳定的 PNG、尺寸、原始文档路径、页码、SHA-256、页面角色和
 视觉风险标签。`visual-search --only-vision` 可以只搜索解析阶段筛出的视觉风险页。首次使用
 CLIP 时，SentenceTransformers 会下载指定模型；默认模型是 `clip-ViT-B-32`。
+`visual-index` 会分批编码页面，并把模型名、页码、图片 SHA-256 和归一化向量保存为缓存。
+`visual-evaluate` 会在加载时校验模型与图片哈希，复用页面向量，只编码查询，并输出与 BM25
+一致的 Recall@K、Precision@K、MRR、nDCG@K、无结果率、延迟和分题型指标。
 
 每条检索结果都包含基于文件内容 SHA-256 生成的稳定 `document_id`、`page_start`、
 `page_end`、`section` 和稳定的 `chunk_id`，可直接作为引用生成的 evidence。原始文件名保存在
@@ -99,8 +104,8 @@ src/slide2study/
 
 ## 算法迭代路线
 
-1. 固化真实课程评测集与 BM25 数字
-2. 训练 text bi-encoder，并做 BM25 + Dense hybrid
+1. 人工复核并扩充真实课程评测集
+2. 训练 text bi-encoder，并做 BM25 + Dense/Visual hybrid
 3. 从 BM25/Dense 结果挖 hard negatives，微调 cross-encoder reranker
 4. 渲染页面图像，训练 query-page 对比学习模型
 5. 加入引用准确率、faithfulness、幻觉率和端到端延迟评测
