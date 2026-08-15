@@ -34,12 +34,17 @@ class BM25Retriever(Retriever):
         k1: float = 1.5,
         b: float = 0.75,
         level_weights: dict[str, float] | None = None,
+        exclude_low_value: bool = True,
     ):
-        self.chunks = chunks
+        self.chunks = [
+            chunk
+            for chunk in chunks
+            if not (exclude_low_value and chunk.metadata.get("text_retrieval_excluded", False))
+        ]
         self.k1 = k1
         self.b = b
         self.level_weights = level_weights or {"section": 0.65, "page": 0.85, "passage": 1.0}
-        self.term_frequencies = [Counter(mixed_tokenize(chunk.text)) for chunk in chunks]
+        self.term_frequencies = [Counter(mixed_tokenize(chunk.text)) for chunk in self.chunks]
         self.lengths = [sum(counter.values()) for counter in self.term_frequencies]
         self.avg_length = sum(self.lengths) / len(self.lengths) if self.lengths else 0.0
         document_frequency: dict[str, int] = defaultdict(int)

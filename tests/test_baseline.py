@@ -2,16 +2,38 @@ import importlib.util
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from slide2study.chunking import HierarchicalChunker, validate_chunk_hierarchy
 from slide2study.evaluation import evaluate
-from slide2study.models import Chunk, Page
-from slide2study.parsing import PDFParser, PPTXParser, TextParser, build_parse_report
+from slide2study.interfaces import MultimodalPageEncoder
+from slide2study.models import Chunk, Page, RenderedPage
+from slide2study.parsing import (
+    PDFParser,
+    PPTXParser,
+    TextParser,
+    build_parse_report,
+    prepare_pages_for_retrieval,
+)
 from slide2study.retrieval import BM25Retriever, mixed_tokenize
 from slide2study.training import mine_hard_negatives
+from slide2study.vision import (
+    VisualPageRetriever,
+    load_page_manifest,
+    render_document,
+    write_page_manifest,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
+
+
+class FakeMultimodalEncoder(MultimodalPageEncoder):
+    def encode_pages(self, image_paths: list[str]) -> list[list[float]]:
+        return [[1.0, 0.0], [0.0, 1.0]][: len(image_paths)]
+
+    def encode_queries(self, queries: list[str]) -> list[list[float]]:
+        return [[0.0, 1.0] for _ in queries]
 
 
 class BaselineTests(unittest.TestCase):
@@ -113,6 +135,148 @@ class BaselineTests(unittest.TestCase):
         self.assertEqual(report.low_text_pages, [3])
         self.assertEqual(report.requires_vision_pages, [2, 3])
         self.assertAlmostEqual(report.to_dict()["text_coverage"], 2 / 3, places=6)
+
+    def test_repeated_footer_is_removed_without_losing_raw_evidence(self):
+        pages = [
+            Page("deck", 1, "Introduction\nCourse 2026 1", metadata={"image_count": 1}),
+            Page(
+                "deck",
+                2,
+                "Copyright Act notice\nDo not remove this notice\nCourse 2026 2",
+                metadata={"image_count": 1},
+            ),
+            Page(
+                "deck",
+                3,
+                "IPv6 header\nRequired fields and sizes\nCourse 2026 3",
+                metadata={"image_count": 1},
+            ),
+            Page(
+                "deck",
+                4,
+                "Routing algorithms\nDistance vector details\nCourse 2026 4",
+                metadata={"image_count": 1},
+            ),
+        ]
+        prepared = prepare_pages_for_retrieval(pages)
+        self.assertEqual(prepared[0].text, "Introduction")
+        self.assertIn("Course 2026 1", prepared[0].metadata["raw_text"])
+        self.assertEqual(prepared[0].metadata["role"], "section_divider")
+        self.assertTrue(prepared[0].metadata["section_break"])
+        self.assertEqual(prepared[1].metadata["role"], "boilerplate")
+        self.assertEqual(prepared[2].metadata["role"], "content")
+
+    def test_low_value_pages_are_preserved_but_not_retrieved(self):
+        pages = prepare_pages_for_retrieval(
+            [
+                Page("deck", 1, "Module 1", metadata={"image_count": 1}),
+                Page(
+                    "deck",
+                    2,
+                    "Copyright Act notice\nDo not remove this notice",
+                    metadata={"image_count": 1},
+                ),
+                Page(
+                    "deck",
+                    3,
+                    "IPv6 header\nRequired fields in the header are shown below.",
+                    metadata={"image_count": 1},
+                ),
+            ]
+        )
+        chunks = HierarchicalChunker().chunk(pages)
+        page_chunks = {chunk.page_start: chunk for chunk in chunks if chunk.level == "page"}
+        self.assertEqual(set(page_chunks), {1, 2, 3})
+        self.assertEqual(page_chunks[1].child_ids, [])
+        self.assertEqual(page_chunks[2].child_ids, [])
+        self.assertFalse(BM25Retriever(chunks).search("Copyright Act notice"))
+        result = BM25Retriever(chunks).search("IPv6 required fields")[0]
+        self.assertEqual(result.chunk.page_start, 3)
+
+    def test_dense_visual_layout_is_sent_to_vision_pipeline(self):
+        table_lines = [f"row {index} value {index * 2}" for index in range(12)]
+        page = Page("deck", 7, "\n".join(table_lines), metadata={"image_count": 1})
+        report = build_parse_report([page])
+        self.assertEqual(report.requires_vision_pages, [7])
+
+    def test_visual_page_retriever_ranks_cross_modal_embeddings(self):
+        pages = [
+            RenderedPage("deck", 1, "page-1.png", "deck.pdf", 100, 80, "a"),
+            RenderedPage("deck", 2, "page-2.png", "deck.pdf", 100, 80, "b"),
+        ]
+        results = VisualPageRetriever(pages, FakeMultimodalEncoder()).search("diagram", 2)
+        self.assertEqual([result.page.page_number for result in results], [2, 1])
+        self.assertEqual(results[0].score, 1.0)
+
+    def test_page_manifest_round_trip(self):
+        page = RenderedPage(
+            "deck", 3, "page-0003.png", "deck.pdf", 1280, 720, "abc", True, "content", 0.8
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            manifest = Path(directory) / "pages.jsonl"
+            write_page_manifest([page], manifest)
+            loaded = load_page_manifest(manifest)
+        self.assertEqual(loaded, [page])
+
+    @unittest.skipUnless(importlib.util.find_spec("PIL"), "Pillow is not installed")
+    def test_pdf_renderer_writes_stable_page_mapping(self):
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "lecture.pdf"
+            source.write_bytes(b"placeholder")
+            executable = root / "pdftoppm.exe"
+            executable.write_bytes(b"placeholder")
+
+            def fake_run(command: list[str]) -> None:
+                prefix = Path(command[-1])
+                Image.new("RGB", (320, 180), "white").save(f"{prefix}-1.png")
+                Image.new("RGB", (320, 180), "black").save(f"{prefix}-2.png")
+
+            with patch("slide2study.vision._run", side_effect=fake_run):
+                pages = render_document(
+                    source,
+                    root / "rendered",
+                    pdftoppm_executable=executable,
+                    page_metadata={2: {"requires_vision": True, "visual_risk_score": 0.8}},
+                )
+            self.assertEqual([page.page_number for page in pages], [1, 2])
+            self.assertEqual(Path(pages[0].image_path).name, "page-0001.png")
+            self.assertEqual((pages[0].width, pages[0].height), (320, 180))
+            self.assertTrue(pages[1].requires_vision)
+            self.assertEqual(len(pages[0].sha256), 64)
+
+    @unittest.skipUnless(importlib.util.find_spec("PIL"), "Pillow is not installed")
+    def test_pptx_renderer_converts_before_page_rendering(self):
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "lecture.pptx"
+            source.write_bytes(b"placeholder")
+            pdftoppm = root / "pdftoppm.exe"
+            soffice = root / "soffice.exe"
+            pdftoppm.write_bytes(b"placeholder")
+            soffice.write_bytes(b"placeholder")
+
+            def fake_run(command: list[str]) -> None:
+                if "--convert-to" in command:
+                    output_dir = Path(command[command.index("--outdir") + 1])
+                    (output_dir / "lecture.pdf").write_bytes(b"converted")
+                else:
+                    Image.new("RGB", (320, 180), "white").save(f"{command[-1]}-1.png")
+
+            with patch("slide2study.vision._run", side_effect=fake_run):
+                pages = render_document(
+                    source,
+                    root / "rendered",
+                    pdftoppm_executable=pdftoppm,
+                    soffice_executable=soffice,
+                )
+            self.assertEqual(len(pages), 1)
+            self.assertEqual(pages[0].source_path, str(source.resolve()))
+            self.assertEqual(pages[0].document_id, "lecture")
 
     @unittest.skipUnless(importlib.util.find_spec("pptx"), "python-pptx is not installed")
     def test_pptx_parser_extracts_title_and_table(self):

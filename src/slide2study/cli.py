@@ -11,6 +11,13 @@ from slide2study.io import load_chunks, read_jsonl, write_jsonl
 from slide2study.parsing import build_parse_report, get_parser
 from slide2study.retrieval import BM25Retriever
 from slide2study.training import mine_hard_negatives
+from slide2study.vision import (
+    SentenceTransformersCLIPEncoder,
+    VisualPageRetriever,
+    load_page_manifest,
+    render_document,
+    write_page_manifest,
+)
 
 
 def _print_json(value: object, *, indent: int | None = None) -> None:
@@ -47,6 +54,26 @@ def build_parser() -> argparse.ArgumentParser:
     inspect.add_argument("--pages-output", type=Path)
     inspect.add_argument("--low-text-threshold", type=int, default=40)
 
+    render = commands.add_parser(
+        "render-pages", help="Render PDF/PPTX pages and write a page-image manifest"
+    )
+    render.add_argument("document", type=Path)
+    render.add_argument("--output-dir", type=Path, required=True)
+    render.add_argument("--manifest", type=Path)
+    render.add_argument("--dpi", type=int, default=144)
+    render.add_argument("--pdftoppm", type=Path)
+    render.add_argument("--soffice", type=Path)
+
+    visual_search = commands.add_parser(
+        "visual-search", help="Retrieve rendered pages with a CLIP baseline"
+    )
+    visual_search.add_argument("manifest", type=Path)
+    visual_search.add_argument("query")
+    visual_search.add_argument("--top-k", type=int, default=5)
+    visual_search.add_argument("--model", default="clip-ViT-B-32")
+    visual_search.add_argument("--device")
+    visual_search.add_argument("--only-vision", action="store_true")
+
     search = commands.add_parser("search", help="Search a chunk corpus with BM25")
     search.add_argument("corpus", type=Path)
     search.add_argument("query")
@@ -70,6 +97,39 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "render-pages":
+        parsed_pages = get_parser(args.document).parse(args.document)
+        rendered_pages = render_document(
+            args.document,
+            args.output_dir,
+            dpi=args.dpi,
+            pdftoppm_executable=args.pdftoppm,
+            soffice_executable=args.soffice,
+            page_metadata={page.page_number: page.metadata for page in parsed_pages},
+        )
+        manifest = args.manifest or args.output_dir / f"{args.document.stem}.jsonl"
+        write_page_manifest(rendered_pages, manifest)
+        _print_json(
+            {
+                "document_id": args.document.stem,
+                "rendered_pages": len(rendered_pages),
+                "requires_vision_pages": sum(page.requires_vision for page in rendered_pages),
+                "output_dir": str(args.output_dir),
+                "manifest": str(manifest),
+            },
+            indent=2,
+        )
+        return 0
+    if args.command == "visual-search":
+        rendered_pages = load_page_manifest(args.manifest)
+        if args.only_vision:
+            rendered_pages = [page for page in rendered_pages if page.requires_vision]
+        if not rendered_pages:
+            raise ValueError("The page manifest has no eligible pages")
+        encoder = SentenceTransformersCLIPEncoder(args.model, args.device)
+        results = VisualPageRetriever(rendered_pages, encoder).search(args.query, args.top_k)
+        _print_json([result.to_dict() for result in results], indent=2)
+        return 0
     if args.command == "inspect":
         pages = get_parser(args.document).parse(args.document)
         if args.pages_output:

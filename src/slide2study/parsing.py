@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import re
 from abc import ABC, abstractmethod
+from collections import Counter
+from math import ceil
 from pathlib import Path
 
 from slide2study.models import Page, ParseReport
@@ -64,7 +66,7 @@ class PDFParser(DocumentParser):
                     },
                 )
             )
-        return pages
+        return prepare_pages_for_retrieval(pages)
 
 
 class PPTXParser(DocumentParser):
@@ -113,7 +115,7 @@ class PPTXParser(DocumentParser):
             if notes:
                 metadata["speaker_notes"] = notes
             pages.append(Page(source.stem, number, "\n".join(blocks), title, metadata))
-        return pages
+        return prepare_pages_for_retrieval(pages)
 
 
 def get_parser(path: str | Path) -> DocumentParser:
@@ -141,11 +143,17 @@ def build_parse_report(pages: list[Page], low_text_threshold: int = 40) -> Parse
         page.page_number for page in pages if 0 < len(page.text.strip()) < low_text_threshold
     ]
     image_pages = [page.page_number for page in pages if page.metadata.get("image_count", 0) > 0]
-    requires_vision = [
-        page.page_number
-        for page in pages
-        if page.metadata.get("image_count", 0) > 0 and len(page.text.strip()) < low_text_threshold
+    quality = {page.page_number: _page_quality(page, low_text_threshold) for page in pages}
+    requires_vision = [number for number, value in quality.items() if value["requires_vision"]]
+    low_value_pages = [
+        number
+        for number, value in quality.items()
+        if value["role"] in {"boilerplate", "section_divider"}
     ]
+    excluded_pages = [
+        number for number, value in quality.items() if value["text_retrieval_excluded"]
+    ]
+    page_roles = Counter(value["role"] for value in quality.values())
     warnings = []
     if not pages:
         warnings.append("No pages were parsed")
@@ -155,6 +163,12 @@ def build_parse_report(pages: list[Page], low_text_threshold: int = 40) -> Parse
         warnings.append(f"{len(low_text_pages)} page(s) contain very little text")
     if requires_vision:
         warnings.append(f"{len(requires_vision)} page(s) should use visual understanding")
+    if low_value_pages:
+        warnings.append(
+            f"{len(low_value_pages)} low-value page(s) are excluded from text retrieval"
+        )
+    if excluded_pages:
+        warnings.append(f"{len(excluded_pages)} page(s) are excluded from text retrieval")
     return ParseReport(
         document_id=document_id,
         page_count=len(pages),
@@ -164,8 +178,130 @@ def build_parse_report(pages: list[Page], low_text_threshold: int = 40) -> Parse
         low_text_pages=low_text_pages,
         image_pages=image_pages,
         requires_vision_pages=requires_vision,
+        low_value_pages=low_value_pages,
+        text_retrieval_excluded_pages=excluded_pages,
+        page_roles=dict(sorted(page_roles.items())),
+        removed_boilerplate_lines=sum(
+            len(page.metadata.get("removed_boilerplate_lines", [])) for page in pages
+        ),
         warnings=warnings,
     )
+
+
+def prepare_pages_for_retrieval(pages: list[Page]) -> list[Page]:
+    repeated_lines = _repeated_boilerplate_lines(pages)
+    for page in pages:
+        original = page.text
+        kept_lines = []
+        removed_lines = []
+        for line in original.splitlines():
+            if _normalize_repeated_line(line) in repeated_lines:
+                removed_lines.append(line.strip())
+            else:
+                kept_lines.append(line)
+        if removed_lines:
+            page.metadata["raw_text"] = original
+            page.metadata["removed_boilerplate_lines"] = removed_lines
+            page.text = "\n".join(kept_lines).strip()
+        page.metadata.update(_page_quality(page, 40))
+        if page.metadata["role"] == "section_divider":
+            page.metadata["section_break"] = True
+    return pages
+
+
+def _repeated_boilerplate_lines(pages: list[Page]) -> set[str]:
+    if len(pages) < 3:
+        return set()
+    counts: Counter[str] = Counter()
+    originals: dict[str, set[str]] = {}
+    for page in pages:
+        normalized_on_page = set()
+        lines = [line for line in page.text.splitlines() if line.strip()]
+        boundary_lines = lines[:2] + lines[-2:]
+        for line in boundary_lines:
+            normalized = _normalize_repeated_line(line)
+            if normalized and len(normalized) <= 80:
+                normalized_on_page.add(normalized)
+                originals.setdefault(normalized, set()).add(line.strip())
+        counts.update(normalized_on_page)
+    minimum_pages = max(3, ceil(len(pages) * 0.3))
+    return {
+        line
+        for line, count in counts.items()
+        if count >= minimum_pages and (_looks_like_footer(line) or len(originals[line]) > 1)
+    }
+
+
+def _normalize_repeated_line(line: str) -> str:
+    normalized = re.sub(r"\d+", "<n>", line.strip().lower())
+    return re.sub(r"\s+", " ", normalized)
+
+
+def _looks_like_footer(line: str) -> bool:
+    return bool(
+        re.search(r"(?:copyright|university|unimelb|lecture|slide|page|<n>\s*/\s*<n>)", line)
+    )
+
+
+def _page_quality(page: Page, low_text_threshold: int) -> dict[str, object]:
+    text = page.text.strip()
+    lowered = text.lower()
+    image_count = int(page.metadata.get("image_count", 0) or 0)
+    compact_length = len(re.sub(r"\s+", "", text))
+    semantic_lines = [line.strip() for line in text.splitlines() if line.strip()]
+    boilerplate_patterns = (
+        "copyright act",
+        "do not remove this notice",
+        "pursuant to part vb",
+        "subject to copyright",
+    )
+    if any(pattern in lowered for pattern in boilerplate_patterns):
+        role = "boilerplate"
+    elif (
+        image_count > 0
+        and len(semantic_lines) == 1
+        and compact_length <= 100
+        and not re.search(r"[.!?。！？]$", semantic_lines[0])
+    ):
+        role = "section_divider"
+    elif image_count > 0 and compact_length < 20:
+        role = "visual_only"
+    elif not text:
+        role = "empty"
+    else:
+        role = "content"
+
+    reasons = []
+    if image_count and compact_length < 120:
+        reasons.append("image_with_sparse_text")
+    if image_count >= 10:
+        reasons.append("many_image_objects")
+    if image_count and len(semantic_lines) >= 10 and compact_length < 500:
+        reasons.append("dense_visual_layout")
+    if role in {"visual_only", "section_divider"}:
+        reasons.append(role)
+    requires_vision = bool(reasons) and role != "boilerplate"
+    excluded = role in {"boilerplate", "visual_only", "section_divider", "empty"}
+    return {
+        "role": role,
+        "visual_risk_score": round(
+            min(
+                1.0,
+                (0.55 if image_count and compact_length < 120 else 0.0)
+                + (0.35 if image_count >= 10 else 0.0)
+                + (
+                    0.45
+                    if image_count and len(semantic_lines) >= 10 and compact_length < 500
+                    else 0.0
+                )
+                + (0.1 if compact_length < low_text_threshold else 0.0),
+            ),
+            2,
+        ),
+        "visual_risk_reasons": reasons,
+        "requires_vision": requires_vision,
+        "text_retrieval_excluded": excluded,
+    }
 
 
 def _require_file(path: Path) -> None:

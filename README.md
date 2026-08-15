@@ -6,7 +6,11 @@ Slide2Study 是一个面向课程 Slides/PDF 的多模态、结构感知 RAG 项
 
 - PDF、PPTX、Markdown、纯文本的页级解析
 - PPTX 阅读顺序、表格、演讲者备注与页面布局元数据
-- PDF 页面尺寸、旋转、图片数量与低文本页面诊断
+- PDF 页面尺寸、旋转、图片数量、视觉风险与低价值页面诊断
+- 跨页重复页眉/页脚清理，保留原始文本用于证据追溯
+- 版权页、视觉空白页和章节封面标注；文本检索默认跳过低价值内容
+- PDF/PPTX 页面渲染、稳定页码映射与 SHA-256 图像校验
+- SentenceTransformers CLIP query-to-page 视觉检索基线
 - 章节级、页面级、局部内容级三级切块，保留跨页章节和父子关系
 - 无额外分词依赖的中英文混合 BM25
 - Recall@K、MRR、nDCG@K 评测
@@ -33,7 +37,23 @@ python -m pip install -e ".[documents]"
 slide2study ingest data/raw/lecture.pdf --output artifacts/lecture_chunks.jsonl
 ```
 
+页面视觉检索需要 Poppler；PPTX 还需要系统安装 LibreOffice。CLIP 编码依赖单独安装：
+
+```bash
+python -m pip install -e ".[documents,vision]"
+slide2study render-pages data/raw/lecture.pdf --output-dir artifacts/pages
+slide2study visual-search artifacts/pages/lecture.jsonl "IPv6 header fields" --top-k 5
+```
+
+`render-pages` 为每页生成稳定的 PNG、尺寸、原始文档路径、页码、SHA-256、页面角色和
+视觉风险标签。`visual-search --only-vision` 可以只搜索解析阶段筛出的视觉风险页。首次使用
+CLIP 时，SentenceTransformers 会下载指定模型；默认模型是 `clip-ViT-B-32`。
+
 每条检索结果都包含 `document_id`、`page_start`、`page_end`、`section` 和稳定的 `chunk_id`，可直接作为引用生成的 evidence。
+
+`inspect` 报告还会输出 `page_roles`、`requires_vision_pages`、
+`text_retrieval_excluded_pages` 和 `removed_boilerplate_lines`。视觉页不会被删除：原始文本保存在
+页面元数据中，供后续页面图像检索和引用回溯使用。
 
 ## 评测集格式
 
@@ -52,6 +72,7 @@ src/slide2study/
   retrieval.py     # BM25 baseline 与 Dense 接口
   evaluation.py    # Recall@K / MRR / nDCG@K
   interfaces.py    # Reranker / 多模态编码 / 引用生成接口
+  vision.py        # PDF/PPTX 页面渲染、CLIP 编码和视觉页面检索
   training.py      # BM25/Dense hard-negative mining
   cli.py           # inspect / ingest / search / evaluate / mine-negatives
 ```

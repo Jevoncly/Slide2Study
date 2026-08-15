@@ -33,7 +33,13 @@ class HierarchicalChunker:
                 _stable_id("page", page.document_id, str(page.page_number))
                 for page in section_pages
             ]
-            section_text = "\n\n".join(page.text for page in section_pages if page.text.strip())
+            retrievable_pages = [
+                page
+                for page in section_pages
+                if page.text.strip() and not page.metadata.get("text_retrieval_excluded", False)
+            ]
+            section_body = "\n\n".join(page.text for page in retrievable_pages)
+            section_text = f"{section_title}\n{section_body}".strip()
             chunks.append(
                 Chunk(
                     chunk_id=section_id,
@@ -46,12 +52,14 @@ class HierarchicalChunker:
                     child_ids=page_ids,
                     metadata={
                         "page_count": len(section_pages),
+                        "retrievable_page_count": len(retrievable_pages),
                         "truncated": len(section_text) > self.max_section_chars,
                     },
                 )
             )
             for page, page_id in zip(section_pages, page_ids):
-                passages = self._passage_chunks(page, section_title, page_id)
+                excluded = bool(page.metadata.get("text_retrieval_excluded", False))
+                passages = [] if excluded else self._passage_chunks(page, section_title, page_id)
                 chunks.append(
                     Chunk(
                         chunk_id=page_id,
