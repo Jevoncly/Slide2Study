@@ -29,6 +29,17 @@ JSONL 每行一条问题，必须包含：
 5. 检查问题没有泄漏答案，也不是整句照抄原文。
 6. 将 `annotation_status` 从 `candidate` 改为 `verified`。
 
+可以先生成本地审阅包，将候选问题与证据图片放在同一页面：
+
+```powershell
+slide2study build-review-pack artifacts/course_chunks.jsonl data/private/eval.jsonl `
+  --output artifacts/review/index.html `
+  --manifests artifacts/rendered/*.jsonl
+```
+
+双击 `index.html` 后可以按题型、split 和复核状态筛选。复核选择与备注保存在浏览器本地，
+“导出复核 JSONL”会保留全部记录，并仅将选择“通过”的记录改为 `verified`。
+
 ## 数据划分
 
 - 同一近重复问题只能出现在一个 split。

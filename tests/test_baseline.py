@@ -22,6 +22,7 @@ from slide2study.parsing import (
     prepare_pages_for_retrieval,
 )
 from slide2study.retrieval import BM25Retriever, mixed_tokenize
+from slide2study.review import build_review_pack
 from slide2study.training import mine_hard_negatives
 from slide2study.vision import (
     VisualPageRetriever,
@@ -353,6 +354,42 @@ class BaselineTests(unittest.TestCase):
             write_page_manifest([page], manifest)
             loaded = load_page_manifest(manifest)
         self.assertEqual(loaded, [page])
+
+    def test_review_pack_copies_evidence_and_builds_export_ui(self):
+        page_chunk = next(chunk for chunk in self.chunks if chunk.level == "page")
+        example = {
+            "id": "review-q1",
+            "query": "What evidence is on this page?",
+            "document_id": page_chunk.document_id,
+            "relevant_pages": [page_chunk.page_start],
+            "relevant_chunk_ids": [page_chunk.chunk_id],
+            "question_type": "text",
+            "split": "test",
+            "annotation_status": "candidate",
+            "answer_hint": "The page text",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            image = root / "source.png"
+            image.write_bytes(b"fake image")
+            rendered = RenderedPage(
+                page_chunk.document_id,
+                page_chunk.page_start,
+                str(image),
+                "lecture.pdf",
+                100,
+                80,
+                "abc",
+            )
+            output = root / "review" / "index.html"
+            summary = build_review_pack([example], self.chunks, output, [rendered])
+            html = output.read_text(encoding="utf-8")
+            copied = list((output.parent / "index_assets").glob("*.png"))
+        self.assertEqual(summary["examples"], 1)
+        self.assertEqual(summary["copied_images"], 1)
+        self.assertEqual(len(copied), 1)
+        self.assertIn("Slide2Study QA 人工复核", html)
+        self.assertIn("导出复核 JSONL", html)
 
     @unittest.skipUnless(importlib.util.find_spec("PIL"), "Pillow is not installed")
     def test_pdf_renderer_writes_stable_page_mapping(self):

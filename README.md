@@ -29,6 +29,7 @@ slide2study search artifacts/sample_chunks.jsonl "正则化为什么能降低模
 slide2study search artifacts/sample_chunks.jsonl "正则化" --levels page,passage
 slide2study validate-dataset examples/retrieval_eval.jsonl --strict
 slide2study evaluate artifacts/sample_chunks.jsonl examples/retrieval_eval.jsonl --split test --top-k 3 --strict-dataset --output artifacts/bm25_report.json
+slide2study build-review-pack artifacts/course_chunks.jsonl data/private/eval.jsonl --output artifacts/review/index.html --manifests artifacts/pages/*.jsonl
 slide2study mine-negatives artifacts/sample_chunks.jsonl examples/retrieval_eval.jsonl --output artifacts/train_triplets.jsonl
 ```
 
@@ -77,6 +78,10 @@ chunk metadata 中；同一内容改名后 `document_id` 不变。
 Recall@K、Precision@K、MRR、nDCG@K、
 无结果率、平均/P95 延迟，以及按题型拆分的指标。
 
+`build-review-pack` 会生成仅在本机使用的交互式 HTML：逐条展示问题、答案提示、证据页
+图片和解析文本，保存浏览器内复核进度，并导出带 `review_decision` 的 JSONL。课程图片和
+审阅包应继续放在被 Git 忽略的 `artifacts/` 中。
+
 ## 代码结构
 
 ```text
@@ -85,6 +90,7 @@ src/slide2study/
   chunking.py      # 跨页章节识别与 section/page/passage 三级切块
   retrieval.py     # BM25 baseline 与 Dense 接口
   evaluation.py    # 数据校验、检索指标、分类型与延迟报告
+  review.py        # 私有 QA 人工复核 HTML 与导出
   interfaces.py    # Reranker / 多模态编码 / 引用生成接口
   vision.py        # PDF/PPTX 页面渲染、CLIP 编码和视觉页面检索
   training.py      # BM25/Dense hard-negative mining

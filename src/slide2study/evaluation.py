@@ -169,7 +169,9 @@ def validate_dataset(
             if chunks_are_valid:
                 missing_chunks = sorted(set(relevant_chunks) - chunk_by_id.keys())
                 if missing_chunks:
-                    errors.append(f"{prefix}: relevant chunk(s) not in the corpus: {missing_chunks}")
+                    errors.append(
+                        f"{prefix}: relevant chunk(s) not in the corpus: {missing_chunks}"
+                    )
                 elif isinstance(document_id, str):
                     foreign = sorted(
                         chunk_id

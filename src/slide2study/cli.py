@@ -11,6 +11,7 @@ from slide2study.evaluation import DATASET_SPLITS, evaluate, validate_dataset
 from slide2study.io import load_chunks, read_jsonl, write_jsonl
 from slide2study.parsing import build_parse_report, get_parser
 from slide2study.retrieval import BM25Retriever
+from slide2study.review import build_review_pack
 from slide2study.training import mine_hard_negatives
 from slide2study.vision import (
     SentenceTransformersCLIPEncoder,
@@ -36,6 +37,19 @@ def _parse_levels(value: str) -> set[str]:
         expected = ",".join(sorted(CHUNK_LEVELS))
         raise argparse.ArgumentTypeError(f"levels must be a comma-separated subset of: {expected}")
     return levels
+
+
+def _expand_paths(values: list[Path]) -> list[Path]:
+    expanded = []
+    for value in values:
+        if any(character in value.name for character in "*?["):
+            matches = sorted(value.parent.glob(value.name))
+            if not matches:
+                raise FileNotFoundError(f"No files match: {value}")
+            expanded.extend(matches)
+        else:
+            expanded.append(value)
+    return expanded
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -115,6 +129,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Require every example to have a supported question_type",
     )
 
+    review = commands.add_parser(
+        "build-review-pack", help="Build a private HTML workflow for reviewing candidate QA"
+    )
+    review.add_argument("corpus", type=Path)
+    review.add_argument("dataset", type=Path)
+    review.add_argument("--output", type=Path, required=True)
+    review.add_argument(
+        "--manifests", nargs="*", type=Path, default=[], help="Rendered page manifests"
+    )
+
     mining = commands.add_parser("mine-negatives", help="Mine BM25 hard negatives for training")
     mining.add_argument("corpus", type=Path)
     mining.add_argument("dataset", type=Path)
@@ -140,7 +164,7 @@ def main(argv: list[str] | None = None) -> int:
         write_page_manifest(rendered_pages, manifest)
         _print_json(
             {
-                "document_id": args.document.stem,
+                "document_id": rendered_pages[0].document_id if rendered_pages else None,
                 "rendered_pages": len(rendered_pages),
                 "requires_vision_pages": sum(page.requires_vision for page in rendered_pages),
                 "output_dir": str(args.output_dir),
@@ -180,6 +204,26 @@ def main(argv: list[str] | None = None) -> int:
                 require_annotation_statuses=args.strict,
                 chunks=validation_chunks,
             ).to_dict(),
+            indent=2,
+        )
+        return 0
+    if args.command == "build-review-pack":
+        review_chunks = load_chunks(args.corpus)
+        review_examples = list(read_jsonl(args.dataset))
+        validate_dataset(
+            review_examples,
+            require_question_types=True,
+            require_splits=True,
+            require_document_ids=True,
+            require_annotation_statuses=True,
+            chunks=review_chunks,
+        )
+        manifest_paths = _expand_paths(args.manifests)
+        rendered_pages = [
+            page for manifest in manifest_paths for page in load_page_manifest(manifest)
+        ]
+        _print_json(
+            build_review_pack(review_examples, review_chunks, args.output, rendered_pages),
             indent=2,
         )
         return 0
