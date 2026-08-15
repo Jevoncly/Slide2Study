@@ -15,11 +15,16 @@ from slide2study.dense import (
 from slide2study.evaluation import (
     DATASET_SPLITS,
     compare_page_retrievers,
+    compare_retrievers,
     evaluate,
     evaluate_page_retrieval,
     validate_dataset,
 )
-from slide2study.fusion import BM25PageRetriever, ReciprocalRankFusionRetriever
+from slide2study.fusion import (
+    BM25PageRetriever,
+    ReciprocalRankFusionChunkRetriever,
+    ReciprocalRankFusionRetriever,
+)
 from slide2study.io import load_chunks, read_jsonl, write_jsonl
 from slide2study.parsing import build_parse_report, get_parser
 from slide2study.retrieval import BM25Retriever, DenseRetriever
@@ -189,6 +194,25 @@ def build_parser() -> argparse.ArgumentParser:
     dense_evaluation.add_argument("--split", choices=sorted(DATASET_SPLITS))
     dense_evaluation.add_argument("--output", type=Path)
 
+    text_hybrid = commands.add_parser(
+        "text-hybrid-evaluate", help="Compare BM25, cached Dense and chunk-level RRF"
+    )
+    text_hybrid.add_argument("corpus", type=Path)
+    text_hybrid.add_argument("dataset", type=Path)
+    text_hybrid.add_argument("--cache", type=Path, required=True)
+    text_hybrid.add_argument("--model")
+    text_hybrid.add_argument("--device")
+    text_hybrid.add_argument("--batch-size", type=int, default=32)
+    text_hybrid.add_argument("--levels", type=_parse_levels, default={"passage"})
+    text_hybrid.add_argument("--top-k", type=int, default=5)
+    text_hybrid.add_argument("--candidate-k", type=int, default=50)
+    text_hybrid.add_argument("--diagnostic-k", type=int, default=10)
+    text_hybrid.add_argument("--rrf-k", type=int, default=60)
+    text_hybrid.add_argument("--bm25-weight", type=float, default=1.0)
+    text_hybrid.add_argument("--dense-weight", type=float, default=1.0)
+    text_hybrid.add_argument("--split", choices=sorted(DATASET_SPLITS))
+    text_hybrid.add_argument("--output", type=Path)
+
     search = commands.add_parser("search", help="Search a chunk corpus with BM25")
     search.add_argument("corpus", type=Path)
     search.add_argument("query")
@@ -237,6 +261,20 @@ def build_parser() -> argparse.ArgumentParser:
     mining.add_argument("--output", type=Path, required=True)
     mining.add_argument("--top-k", type=int, default=20)
     mining.add_argument("--levels", type=_parse_levels, default=set(CHUNK_LEVELS))
+
+    dense_mining = commands.add_parser(
+        "dense-mine-negatives", help="Mine cached Dense hard negatives for training"
+    )
+    dense_mining.add_argument("corpus", type=Path)
+    dense_mining.add_argument("dataset", type=Path)
+    dense_mining.add_argument("--cache", type=Path, required=True)
+    dense_mining.add_argument("--output", type=Path, required=True)
+    dense_mining.add_argument("--model")
+    dense_mining.add_argument("--device")
+    dense_mining.add_argument("--batch-size", type=int, default=32)
+    dense_mining.add_argument("--levels", type=_parse_levels, default={"passage"})
+    dense_mining.add_argument("--top-k", type=int, default=20)
+    dense_mining.add_argument("--split", choices=sorted(DATASET_SPLITS), default="train")
     return parser
 
 
@@ -497,6 +535,125 @@ def main(argv: list[str] | None = None) -> int:
             )
             report["output"] = str(args.output)
         _print_json(report, indent=2)
+        return 0
+    if args.command == "text-hybrid-evaluate":
+        corpus_chunks = load_chunks(args.corpus)
+        chunks = [chunk for chunk in corpus_chunks if chunk.level in args.levels]
+        embeddings, cache_metadata = load_chunk_embedding_cache(chunks, args.cache, args.model)
+        model_name = args.model or cache_metadata["model"]
+        encoder = SentenceTransformersTextEncoder(
+            model_name,
+            args.device,
+            args.batch_size,
+            cache_metadata["query_prefix"],
+            cache_metadata["document_prefix"],
+        )
+        bm25_retriever = BM25Retriever(chunks)
+        dense_retriever = DenseRetriever(chunks, encoder, embeddings)
+        hybrid_retriever = ReciprocalRankFusionChunkRetriever(
+            {"bm25": bm25_retriever, "dense": dense_retriever},
+            {"bm25": args.bm25_weight, "dense": args.dense_weight},
+            args.rrf_k,
+            args.candidate_k,
+        )
+        examples = list(read_jsonl(args.dataset))
+        validation = validate_dataset(
+            examples,
+            require_question_types=True,
+            require_splits=True,
+            require_document_ids=True,
+            require_annotation_statuses=True,
+            chunks=corpus_chunks,
+        )
+        evaluation_examples = (
+            [example for example in examples if example.get("split") == args.split]
+            if args.split
+            else examples
+        )
+        if not evaluation_examples:
+            raise ValueError(f"The dataset has no examples in split {args.split!r}")
+        retrievers = {
+            "bm25": bm25_retriever,
+            "dense": dense_retriever,
+            "hybrid_rrf": hybrid_retriever,
+        }
+        report = {
+            "experiment": {
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "retriever": "bm25-dense-rrf",
+                "model": model_name,
+                "top_k": args.top_k,
+                "candidate_k": args.candidate_k,
+                "diagnostic_k": args.diagnostic_k,
+                "rrf_k": args.rrf_k,
+                "weights": {"bm25": args.bm25_weight, "dense": args.dense_weight},
+                "levels": sorted(args.levels),
+                "split": args.split or "all",
+                "evaluated_queries": len(evaluation_examples),
+                "corpus": str(args.corpus.resolve()),
+                "cache": str(args.cache.resolve()),
+                "dataset": str(args.dataset.resolve()),
+            },
+            "dataset": validation.to_dict(),
+            "metrics": {
+                name: evaluate(retriever, evaluation_examples, args.top_k).to_dict()
+                for name, retriever in retrievers.items()
+            },
+            "query_diagnostics": compare_retrievers(
+                retrievers, evaluation_examples, args.diagnostic_k
+            ),
+        }
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(
+                json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+            report["output"] = str(args.output)
+        _print_json(report, indent=2)
+        return 0
+    if args.command == "dense-mine-negatives":
+        corpus_chunks = load_chunks(args.corpus)
+        chunks = [chunk for chunk in corpus_chunks if chunk.level in args.levels]
+        embeddings, cache_metadata = load_chunk_embedding_cache(chunks, args.cache, args.model)
+        model_name = args.model or cache_metadata["model"]
+        encoder = SentenceTransformersTextEncoder(
+            model_name,
+            args.device,
+            args.batch_size,
+            cache_metadata["query_prefix"],
+            cache_metadata["document_prefix"],
+        )
+        retriever = DenseRetriever(chunks, encoder, embeddings)
+        examples = list(read_jsonl(args.dataset))
+        validate_dataset(
+            examples,
+            require_question_types=True,
+            require_splits=True,
+            require_document_ids=True,
+            require_annotation_statuses=True,
+            chunks=corpus_chunks,
+        )
+        mining_examples = [example for example in examples if example.get("split") == args.split]
+        if not mining_examples:
+            raise ValueError(f"The dataset has no examples in split {args.split!r}")
+        triplets = mine_hard_negatives(
+            retriever,
+            mining_examples,
+            chunks,
+            args.top_k,
+            miner_name=f"dense:{model_name}",
+        )
+        write_jsonl((triplet.to_dict() for triplet in triplets), args.output)
+        _print_json(
+            {
+                "miner": f"dense:{model_name}",
+                "split": args.split,
+                "examples": len(mining_examples),
+                "triplets": len(triplets),
+                "output": str(args.output),
+            },
+            indent=2,
+        )
         return 0
     if args.command == "inspect":
         pages = get_parser(args.document).parse(args.document)

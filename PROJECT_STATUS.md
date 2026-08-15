@@ -8,11 +8,11 @@
 - 课程测试数据：`D:\important files\Unimelb\S1`
 - GitHub：<https://github.com/Jevoncly/Slide2Study>
 - 当前分支：`agent/document-parsing`
-- 上一阶段提交：`9f691b4 Add BM25 CLIP fusion diagnostics`
+- 上一阶段提交：`f54f9b6 Add cached dense text retrieval baseline`
 - 远程跟踪分支：`origin/agent/document-parsing`
 - Draft PR：<https://github.com/Jevoncly/Slide2Study/pull/1>
 
-远程分支已推送至 `9f691b4`；本阶段 Dense Text 工作在此基线上继续。
+远程分支已推送至 `9f691b4`；`f54f9b6` 及本阶段文本融合工作尚未推送。
 
 ## 2. 项目目标
 
@@ -135,14 +135,32 @@ multimodal page retriever。
 - test split（9 条）：Recall@5 1.0、MRR 1.0、nDCG@5 0.9739，超过 BM25 候选基线。
 - 机器辅助问题可能与原文措辞接近；在人工复核和困难负例扩充前，这不是正式泛化结论。
 
+### 3.11 BM25 + Dense 文本融合
+
+- `ReciprocalRankFusionChunkRetriever` 支持 BM25/Dense 权重、RRF 常数和候选深度配置。
+- `text-hybrid-evaluate` 同时输出 BM25、Dense、Hybrid 指标及逐题 chunk 排名诊断。
+- 等权 RRF 在 dev 上低于 Dense；仅使用 dev 将权重固定为 BM25 0.25、Dense 1.0。
+- 固定参数在 dev（4 条）保持 Recall@5、MRR、nDCG@5 全部 1.0。
+- test（9 条）Hybrid：Recall@5 0.8889、MRR 0.8889、nDCG@5 0.8628，低于 Dense。
+- RRF 会提升两路共同命中的词面相似 chunk，可能挤掉 Dense 的正确首位；当前默认仍应使用
+  Dense 单路，不能宣称融合改进。
+
+### 3.12 Dense 困难负例挖掘
+
+- `dense-mine-negatives` 复用已校验的 Dense 缓存，从指定 split 生成训练 triplet。
+- 修复 page chunk 标签与 passage 挖掘语料不一致时整题被跳过的问题：现在按文档和相关页
+  映射全部正例 passage，并从负例中排除。
+- 四课程 train split 15 条候选问题生成 281 个 triplet、101 个去重负例，覆盖全部 15 条问题。
+- 对输出执行页面回查，相关页被误标为负例的数量为 0；每条记录保留 miner 和原始排名。
+
 ## 4. 验证证据
 
 ### 4.1 自动化测试
 
-- 当前测试：32/32 通过；Ruff 检查通过。
+- 当前测试：34/34 通过；Ruff 检查通过。
 - 测试覆盖：解析、质量诊断、三层 chunk、层级校验、BM25、评测指标、hard negatives、
   页面清单、PDF/PPTX 渲染流程、向量缓存及哈希校验、视觉页面排序、页面级评测、
-  BM25 页面映射、加权 RRF、逐题诊断、Dense 排序、chunk 缓存及文本哈希校验、
+  BM25 页面映射、页面/chunk 加权 RRF、逐题诊断、Dense 排序、chunk 缓存及文本哈希校验、
   评测集校验及分类型报告。
 
 运行：
@@ -184,9 +202,9 @@ python -m unittest discover -s tests -v
 - 当前 Torch 为 CPU 版本；真实 CLIP 可以运行，但页面首次编码速度尚未获得 GPU 加速。
 - 当前机器没有 LibreOffice；PPTX 转换路径已由自动化测试覆盖，但只对 PDF 做过真实渲染。
 - 已有四门课 28 条机器辅助候选 QA，但尚未人工复核，不能作为正式测试集或可靠消融结论。
-- 已有 BM25 + CLIP RRF 工程基线，但候选 test 上未超过 BM25；Dense 候选基线虽达到很高
-  指标，尚未经过人工测试集验证。尚未实现 BM25 + Dense 融合、题型感知融合、Reranker
-  训练和多模态对比学习。
+- BM25 + CLIP 和 BM25 + Dense RRF 均已实现，但候选 test 上没有超过各自最强单路；Dense
+  候选基线虽达到很高指标，尚未经过人工测试集验证。尚未实现可靠的题型感知融合、
+  Reranker 训练和多模态对比学习。
 - 尚未实现带引用答案、笔记、闪卡、题库和 UI。
 - 视觉页数量较多；后续需要通过标注集校准视觉风险阈值，而不是只依赖启发式规则。
 
@@ -219,6 +237,8 @@ slide2study visual-evaluate artifacts\course_chunks.jsonl data\private\eval.json
 slide2study hybrid-evaluate artifacts\course_chunks.jsonl data\private\eval.jsonl --manifests artifacts\pages\*.jsonl --cache artifacts\page_embeddings.json --split test --top-k 5 --output artifacts\hybrid_report.json
 slide2study dense-index artifacts\course_chunks.jsonl --output artifacts\dense_embeddings.json --levels passage
 slide2study dense-evaluate artifacts\course_chunks.jsonl data\private\eval.jsonl --cache artifacts\dense_embeddings.json --split test --top-k 5 --output artifacts\dense_report.json
+slide2study text-hybrid-evaluate artifacts\course_chunks.jsonl data\private\eval.jsonl --cache artifacts\dense_embeddings.json --bm25-weight 0.25 --dense-weight 1 --split test --output artifacts\text_hybrid_report.json
+slide2study dense-mine-negatives artifacts\course_chunks.jsonl data\private\eval.jsonl --cache artifacts\dense_embeddings.json --split train --top-k 20 --output artifacts\dense_triplets.jsonl
 ```
 
 `artifacts/` 和 `data/raw/` 已被 Git 忽略。不要把墨尔本大学课件原文件提交到公开仓库。
@@ -228,8 +248,8 @@ slide2study dense-evaluate artifacts\course_chunks.jsonl data\private\eval.jsonl
 1. 从 3-5 门课程建立人工校验的 QA 数据集，每门先做 30-50 条。
 2. 区分 text、formula、table/chart、visual-only、cross-page 五类问题。
 3. 用更大的 dev 集验证题型感知门控，避免 CLIP 降低文本题和跨页题排序。
-4. 实现 BM25 + Dense/Visual Hybrid Retrieval，并优先保护 Dense 已命中的结果。
-5. 从 Dense/BM25 结果挖掘困难负例并微调 Reranker。
+4. 人工复核 Dense 困难负例，去除语义相关但未标注的假负例并控制难度比例。
+5. 使用复核后的 triplet 微调 Reranker，比较能否在不损害 Dense 首位命中的前提下改善困难查询。
 6. 在人工 test 集完成消融，然后再接带引用生成。
 
 短期最重要的不是继续堆功能，而是先获得可信的评测集和 baseline 数字。

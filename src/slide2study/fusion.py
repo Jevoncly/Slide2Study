@@ -3,8 +3,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 
 from slide2study.interfaces import PageRetriever
-from slide2study.models import Chunk, PageSearchResult, RenderedPage
-from slide2study.retrieval import BM25Retriever
+from slide2study.models import Chunk, PageSearchResult, RenderedPage, SearchResult
+from slide2study.retrieval import BM25Retriever, Retriever
 
 
 def _page_key(page: RenderedPage) -> tuple[str, int]:
@@ -98,5 +98,60 @@ class ReciprocalRankFusionRetriever:
         )
         return [
             PageSearchResult(pages[key], round(scores[key], 8), rank)
+            for rank, key in enumerate(ranked_keys[:top_k], 1)
+        ]
+
+
+class ReciprocalRankFusionChunkRetriever(Retriever):
+    """Fuse chunk rankings from sparse and dense text retrievers."""
+
+    def __init__(
+        self,
+        retrievers: Mapping[str, Retriever],
+        weights: Mapping[str, float] | None = None,
+        rrf_k: int = 60,
+        candidate_k: int = 50,
+    ):
+        if not retrievers:
+            raise ValueError("At least one chunk retriever is required")
+        if rrf_k < 0:
+            raise ValueError("rrf_k cannot be negative")
+        if candidate_k < 1:
+            raise ValueError("candidate_k must be at least 1")
+        self.retrievers = dict(retrievers)
+        self.weights = {name: 1.0 for name in retrievers}
+        if weights:
+            unknown = set(weights) - set(retrievers)
+            if unknown:
+                raise ValueError(f"Weights reference unknown retrievers: {sorted(unknown)}")
+            self.weights.update(weights)
+        if any(weight < 0 for weight in self.weights.values()):
+            raise ValueError("Retriever weights cannot be negative")
+        if not any(self.weights.values()):
+            raise ValueError("At least one retriever weight must be positive")
+        self.rrf_k = rrf_k
+        self.candidate_k = candidate_k
+
+    def search(self, query: str, top_k: int = 5) -> list[SearchResult]:
+        if top_k <= 0:
+            return []
+        scores: dict[str, float] = {}
+        chunks: dict[str, Chunk] = {}
+        best_rank: dict[str, int] = {}
+        for name, retriever in self.retrievers.items():
+            weight = self.weights[name]
+            if weight == 0:
+                continue
+            for result in retriever.search(query, self.candidate_k):
+                key = result.chunk.chunk_id
+                chunks[key] = result.chunk
+                scores[key] = scores.get(key, 0.0) + weight / (self.rrf_k + result.rank)
+                best_rank[key] = min(best_rank.get(key, result.rank), result.rank)
+        ranked_keys = sorted(
+            scores,
+            key=lambda key: (-scores[key], best_rank[key], key),
+        )
+        return [
+            SearchResult(chunks[key], round(scores[key], 8), rank)
             for rank, key in enumerate(ranked_keys[:top_k], 1)
         ]

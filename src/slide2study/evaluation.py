@@ -396,3 +396,61 @@ def compare_page_retrievers(
             }
         )
     return comparisons
+
+
+def compare_retrievers(
+    retrievers: dict[str, Retriever], examples: list[dict], top_k: int = 10
+) -> list[dict]:
+    """Record per-query chunk rankings for sparse/dense failure analysis."""
+    if top_k < 1:
+        raise ValueError("top_k must be at least 1")
+    comparisons = []
+    for example in examples:
+        document_id = example.get("document_id")
+        relevant_ids = set(example.get("relevant_chunk_ids", []))
+        relevant_pages = {int(page) for page in example.get("relevant_pages", [])}
+        systems = {}
+        for name, retriever in retrievers.items():
+            results = retriever.search(example["query"], top_k)
+            first_relevant_rank = next(
+                (
+                    result.rank
+                    for result in results
+                    if result.chunk.chunk_id in relevant_ids
+                    or (
+                        (document_id is None or result.chunk.document_id == document_id)
+                        and any(
+                            result.chunk.page_start <= page <= result.chunk.page_end
+                            for page in relevant_pages
+                        )
+                    )
+                ),
+                None,
+            )
+            systems[name] = {
+                "hit_at_k": first_relevant_rank is not None,
+                "first_relevant_rank": first_relevant_rank,
+                "top_chunks": [
+                    {
+                        "chunk_id": result.chunk.chunk_id,
+                        "document_id": result.chunk.document_id,
+                        "page_start": result.chunk.page_start,
+                        "page_end": result.chunk.page_end,
+                        "rank": result.rank,
+                        "score": result.score,
+                    }
+                    for result in results
+                ],
+            }
+        comparisons.append(
+            {
+                "id": example.get("id"),
+                "query": example["query"],
+                "question_type": example.get("question_type"),
+                "document_id": document_id,
+                "relevant_pages": sorted(relevant_pages),
+                "relevant_chunk_ids": sorted(relevant_ids),
+                "systems": systems,
+            }
+        )
+    return comparisons

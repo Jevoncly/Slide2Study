@@ -31,14 +31,16 @@ def mine_hard_negatives(
     by_id = {chunk.chunk_id: chunk for chunk in chunks}
     triplets: list[TrainingTriplet] = []
     for example in examples:
-        positive_ids = set(example.get("relevant_chunk_ids", []))
+        labeled_ids = set(example.get("relevant_chunk_ids", []))
+        positive_ids = {chunk_id for chunk_id in labeled_ids if chunk_id in by_id}
         positive_pages = {int(page) for page in example.get("relevant_pages", [])}
-        if not positive_ids:
-            positive_ids = {
-                chunk.chunk_id
-                for chunk in chunks
-                if any(chunk.page_start <= page <= chunk.page_end for page in positive_pages)
-            }
+        document_id = example.get("document_id")
+        positive_ids.update(
+            chunk.chunk_id
+            for chunk in chunks
+            if (document_id is None or chunk.document_id == document_id)
+            and any(chunk.page_start <= page <= chunk.page_end for page in positive_pages)
+        )
         positive_id = next((value for value in sorted(positive_ids) if value in by_id), None)
         if positive_id is None:
             continue

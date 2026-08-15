@@ -51,6 +51,8 @@ slide2study visual-evaluate artifacts/course_chunks.jsonl data/private/eval.json
 slide2study hybrid-evaluate artifacts/course_chunks.jsonl data/private/eval.jsonl --manifests artifacts/pages/*.jsonl --cache artifacts/page_embeddings.json --split test --top-k 5 --output artifacts/hybrid_report.json
 slide2study dense-index artifacts/course_chunks.jsonl --output artifacts/dense_embeddings.json --levels passage
 slide2study dense-evaluate artifacts/course_chunks.jsonl data/private/eval.jsonl --cache artifacts/dense_embeddings.json --split test --top-k 5 --output artifacts/dense_report.json
+slide2study text-hybrid-evaluate artifacts/course_chunks.jsonl data/private/eval.jsonl --cache artifacts/dense_embeddings.json --bm25-weight 0.25 --dense-weight 1 --split test --output artifacts/text_hybrid_report.json
+slide2study dense-mine-negatives artifacts/course_chunks.jsonl data/private/eval.jsonl --cache artifacts/dense_embeddings.json --split train --top-k 20 --output artifacts/dense_triplets.jsonl
 ```
 
 `render-pages` 为每页生成稳定的 PNG、尺寸、原始文档路径、页码、SHA-256、页面角色和
@@ -66,6 +68,11 @@ BM25 与 CLIP；同一报告包含三路指标及逐题 Top 页面、命中状�
 `dense-index` 默认使用 `intfloat/multilingual-e5-small`，按模型要求为问题和证据分别添加
 `query: ` 与 `passage: ` 前缀，批量生成归一化文本向量。缓存记录模型、前缀、chunk ID、
 文本 SHA-256 和向量；`dense-evaluate` 校验缓存后复用同一评测框架。
+`text-hybrid-evaluate` 对 BM25、Dense 和加权 RRF 使用同一批 chunk，保存三路指标和逐题
+Top chunk 诊断。融合参数必须只在 dev 上选择；如果 test 未超过 Dense，应继续使用 Dense
+单路作为默认检索器。
+`dense-mine-negatives` 从缓存 Dense 排名中生成 query-positive-negative triplet，并将页级
+正例映射到同文档 passage，防止层级过滤后把相关 passage 误标为负例。
 
 每条检索结果都包含基于文件内容 SHA-256 生成的稳定 `document_id`、`page_start`、
 `page_end`、`section` 和稳定的 `chunk_id`，可直接作为引用生成的 evidence。原始文件名保存在

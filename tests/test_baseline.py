@@ -12,14 +12,19 @@ from slide2study.cli import main as cli_main
 from slide2study.dense import load_chunk_embedding_cache, write_chunk_embedding_cache
 from slide2study.evaluation import (
     compare_page_retrievers,
+    compare_retrievers,
     evaluate,
     evaluate_page_retrieval,
     validate_dataset,
 )
-from slide2study.fusion import BM25PageRetriever, ReciprocalRankFusionRetriever
+from slide2study.fusion import (
+    BM25PageRetriever,
+    ReciprocalRankFusionChunkRetriever,
+    ReciprocalRankFusionRetriever,
+)
 from slide2study.identifiers import stable_document_id
 from slide2study.interfaces import MultimodalPageEncoder
-from slide2study.io import write_jsonl
+from slide2study.io import read_jsonl, write_jsonl
 from slide2study.models import Chunk, Page, RenderedPage
 from slide2study.parsing import (
     PDFParser,
@@ -283,6 +288,30 @@ class BaselineTests(unittest.TestCase):
         self.assertTrue(triplets)
         self.assertTrue(all(item.negative_chunk_id not in positive_ids for item in triplets))
 
+    def test_hard_negative_mining_maps_page_labels_to_filtered_passages(self):
+        chunks = [
+            Chunk("passage-1", "deck", 1, 1, "alpha"),
+            Chunk("passage-2", "deck", 2, 2, "beta"),
+        ]
+        triplets = mine_hard_negatives(
+            DenseRetriever(chunks, FakeTextEncoder()),
+            [
+                {
+                    "query": "beta",
+                    "document_id": "deck",
+                    "relevant_chunk_ids": ["page-node-1"],
+                    "relevant_pages": [1],
+                }
+            ],
+            chunks,
+            top_k=2,
+            miner_name="dense:test",
+        )
+        self.assertEqual(len(triplets), 1)
+        self.assertEqual(triplets[0].positive_chunk_id, "passage-1")
+        self.assertEqual(triplets[0].negative_chunk_id, "passage-2")
+        self.assertEqual(triplets[0].miner, "dense:test")
+
     def test_parse_report_flags_pages_that_need_vision(self):
         pages = [
             Page("deck", 1, "A complete text page " * 5),
@@ -446,6 +475,36 @@ class BaselineTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "text mismatch"):
                 load_chunk_embedding_cache(changed, cache)
 
+    def test_bm25_dense_rrf_fuses_chunks_and_records_diagnostics(self):
+        chunks = [
+            Chunk("chunk-1", "deck", 1, 1, "alpha"),
+            Chunk("chunk-2", "deck", 2, 2, "beta"),
+        ]
+        bm25 = BM25Retriever(chunks)
+        dense = DenseRetriever(chunks, FakeTextEncoder())
+        hybrid = ReciprocalRankFusionChunkRetriever(
+            {"bm25": bm25, "dense": dense},
+            {"bm25": 1.0, "dense": 3.0},
+            rrf_k=0,
+        )
+        self.assertEqual(hybrid.search("alpha", 1)[0].chunk.chunk_id, "chunk-2")
+        diagnostics = compare_retrievers(
+            {"bm25": bm25, "hybrid": hybrid},
+            [
+                {
+                    "id": "q1",
+                    "query": "alpha",
+                    "document_id": "deck",
+                    "relevant_pages": [1],
+                    "relevant_chunk_ids": ["chunk-1"],
+                    "question_type": "text",
+                }
+            ],
+            top_k=2,
+        )
+        self.assertEqual(diagnostics[0]["systems"]["bm25"]["first_relevant_rank"], 1)
+        self.assertEqual(diagnostics[0]["systems"]["hybrid"]["first_relevant_rank"], 2)
+
     def test_dense_index_and_evaluate_cli_reuse_chunk_cache(self):
         chunks = [
             Chunk("chunk-1", "deck", 1, 1, "alpha"),
@@ -467,6 +526,8 @@ class BaselineTests(unittest.TestCase):
             dataset = root / "dataset.jsonl"
             cache = root / "dense.json"
             report_path = root / "report.json"
+            hybrid_report_path = root / "hybrid-report.json"
+            negatives_path = root / "triplets.jsonl"
             write_jsonl((chunk.to_dict() for chunk in chunks), corpus)
             write_jsonl([example], dataset)
             with patch(
@@ -503,9 +564,52 @@ class BaselineTests(unittest.TestCase):
                     ),
                     0,
                 )
+                self.assertEqual(
+                    cli_main(
+                        [
+                            "text-hybrid-evaluate",
+                            str(corpus),
+                            str(dataset),
+                            "--cache",
+                            str(cache),
+                            "--split",
+                            "test",
+                            "--top-k",
+                            "1",
+                            "--diagnostic-k",
+                            "1",
+                            "--output",
+                            str(hybrid_report_path),
+                        ]
+                    ),
+                    0,
+                )
+                self.assertEqual(
+                    cli_main(
+                        [
+                            "dense-mine-negatives",
+                            str(corpus),
+                            str(dataset),
+                            "--cache",
+                            str(cache),
+                            "--split",
+                            "test",
+                            "--top-k",
+                            "2",
+                            "--output",
+                            str(negatives_path),
+                        ]
+                    ),
+                    0,
+                )
             report = json.loads(report_path.read_text(encoding="utf-8"))
+            hybrid_report = json.loads(hybrid_report_path.read_text(encoding="utf-8"))
+            triplets = list(read_jsonl(negatives_path))
         self.assertEqual(report["experiment"]["model"], "fake-dense")
         self.assertEqual(report["metrics"]["recall_at_k"], 1.0)
+        self.assertEqual(hybrid_report["metrics"]["hybrid_rrf"]["recall_at_k"], 1.0)
+        self.assertEqual(len(triplets), 1)
+        self.assertTrue(triplets[0]["miner"].startswith("dense:"))
 
     def test_page_embedding_cache_checks_model_and_image_hash(self):
         page = RenderedPage("deck", 1, "page.png", "deck.pdf", 100, 80, "abc")

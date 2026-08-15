@@ -95,7 +95,7 @@ Slide2Study 是一个面向算法工程师求职展示的多模态、结构感�
 - [ ] 页面级 vs 局部 chunk 检索
 - [ ] 无 overlap vs 有 overlap
 - [x] BM25 vs Dense
-- [ ] Dense vs Hybrid
+- [x] Dense vs Hybrid
 - [ ] 有无 Reranker
 - [x] 纯文本 vs 页面视觉检索
 
@@ -119,22 +119,22 @@ Slide2Study 是一个面向算法工程师求职展示的多模态、结构感�
 
 ### 9. Hybrid Retrieval
 
-- [ ] 融合 BM25 与 Dense 排名
+- [x] 融合 BM25 与 Dense 排名
 - [ ] 支持加权分数融合
 - [x] 支持 Reciprocal Rank Fusion（BM25 + Visual baseline）
 - [x] 在验证集上固定融合参数
-- [ ] 对比 BM25、Dense、Hybrid 指标
+- [x] 对比 BM25、Dense、Hybrid 指标
 
 验收标准：Hybrid 在测试集 Recall@K 或 MRR 上稳定超过单一检索器。
 
 ### 10. Hard-negative Mining
 
 - [x] BM25 hard-negative 基础接口
-- [ ] Dense hard-negative mining
+- [x] Dense hard-negative mining
 - [ ] 去除误标为负样本的相关页面
 - [ ] 控制简单、中等、困难负样本比例
-- [ ] 输出训练 triplet/pair 数据
-- [ ] 记录 negative 来源和原始排名
+- [x] 输出训练 triplet/pair 数据
+- [x] 记录 negative 来源和原始排名
 
 ### 11. Reranker 微调
 
@@ -262,5 +262,5 @@ Slide2Study 是一个面向算法工程师求职展示的多模态、结构感�
 8. 实现带引用生成
 9. 完成 UI、实验报告和项目展示
 
-当前下一项：人工复核并扩充 3–5 门课程 QA，加入困难负例并验证 Dense 泛化效果，再实现
-BM25 + Dense/Visual Hybrid Retrieval。
+当前下一项：人工复核并扩充 3–5 门课程 QA，检查 Dense 困难负例中的假负例并控制难度
+比例，再训练 Reranker 和研究可学习融合。
