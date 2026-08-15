@@ -15,6 +15,7 @@ class TrainingTriplet:
     negative_chunk_id: str
     negative_rank: int
     miner: str
+    difficulty: str = "unlabeled"
 
     def to_dict(self) -> dict:
         return asdict(self)
@@ -26,8 +27,13 @@ def mine_hard_negatives(
     chunks: list[Chunk],
     top_k: int = 20,
     miner_name: str = "bm25",
+    max_per_query: dict[str, int] | None = None,
 ) -> list[TrainingTriplet]:
     """Mine high-ranking non-relevant chunks for bi-encoder or cross-encoder training."""
+    limits = max_per_query or {}
+    unknown = set(limits) - {"hard", "medium", "easy"}
+    if unknown or any(limit < 0 for limit in limits.values()):
+        raise ValueError("Difficulty limits must be non-negative hard/medium/easy counts")
     by_id = {chunk.chunk_id: chunk for chunk in chunks}
     triplets: list[TrainingTriplet] = []
     for example in examples:
@@ -44,8 +50,13 @@ def mine_hard_negatives(
         positive_id = next((value for value in sorted(positive_ids) if value in by_id), None)
         if positive_id is None:
             continue
+        selected_by_difficulty = {"hard": 0, "medium": 0, "easy": 0}
         for result in retriever.search(example["query"], top_k):
             if result.chunk.chunk_id in positive_ids:
+                continue
+            difficulty = _negative_difficulty(result.rank)
+            limit = limits.get(difficulty)
+            if limit is not None and selected_by_difficulty[difficulty] >= limit:
                 continue
             triplets.append(
                 TrainingTriplet(
@@ -54,6 +65,16 @@ def mine_hard_negatives(
                     negative_chunk_id=result.chunk.chunk_id,
                     negative_rank=result.rank,
                     miner=miner_name,
+                    difficulty=difficulty,
                 )
             )
+            selected_by_difficulty[difficulty] += 1
     return triplets
+
+
+def _negative_difficulty(rank: int) -> str:
+    if rank <= 5:
+        return "hard"
+    if rank <= 10:
+        return "medium"
+    return "easy"

@@ -53,6 +53,8 @@ slide2study dense-index artifacts/course_chunks.jsonl --output artifacts/dense_e
 slide2study dense-evaluate artifacts/course_chunks.jsonl data/private/eval.jsonl --cache artifacts/dense_embeddings.json --split test --top-k 5 --output artifacts/dense_report.json
 slide2study text-hybrid-evaluate artifacts/course_chunks.jsonl data/private/eval.jsonl --cache artifacts/dense_embeddings.json --bm25-weight 0.25 --dense-weight 1 --split test --output artifacts/text_hybrid_report.json
 slide2study dense-mine-negatives artifacts/course_chunks.jsonl data/private/eval.jsonl --cache artifacts/dense_embeddings.json --split train --top-k 20 --output artifacts/dense_triplets.jsonl
+slide2study dense-mine-negatives artifacts/course_chunks.jsonl data/private/eval.jsonl --cache artifacts/dense_embeddings.json --split train --hard-per-query 2 --medium-per-query 1 --easy-per-query 1 --output artifacts/balanced_triplets.jsonl
+slide2study build-negative-review-pack artifacts/course_chunks.jsonl artifacts/balanced_triplets.jsonl --output artifacts/negative_review/index.html
 ```
 
 `render-pages` 为每页生成稳定的 PNG、尺寸、原始文档路径、页码、SHA-256、页面角色和
@@ -73,6 +75,9 @@ Top chunk 诊断。融合参数必须只在 dev 上选择；如果 test 未超�
 单路作为默认检索器。
 `dense-mine-negatives` 从缓存 Dense 排名中生成 query-positive-negative triplet，并将页级
 正例映射到同文档 passage，防止层级过滤后把相关 passage 误标为负例。
+负例按原始排名划分为 hard（1–5）、medium（6–10）和 easy（11+），可设置每题配额。
+`build-negative-review-pack` 生成仅在本机使用的交互式 HTML，支持标记有效负例、假负例或
+不确定，并导出带人工决定和备注的 JSONL。
 
 每条检索结果都包含基于文件内容 SHA-256 生成的稳定 `document_id`、`page_start`、
 `page_end`、`section` 和稳定的 `chunk_id`，可直接作为引用生成的 evidence。原始文件名保存在
@@ -114,6 +119,7 @@ src/slide2study/
   dense.py         # 多语言文本编码与可校验 chunk 向量缓存
   evaluation.py    # 数据校验、检索指标、分类型与延迟报告
   review.py        # 私有 QA 人工复核 HTML 与导出
+  negative_review.py # 困难负例人工复核 HTML 与导出
   interfaces.py    # Reranker / 多模态编码 / 引用生成接口
   vision.py        # PDF/PPTX 页面渲染、CLIP 编码和视觉页面检索
   fusion.py        # BM25 页面映射、加权 RRF 与多模态融合

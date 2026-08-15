@@ -26,6 +26,7 @@ from slide2study.fusion import (
     ReciprocalRankFusionRetriever,
 )
 from slide2study.io import load_chunks, read_jsonl, write_jsonl
+from slide2study.negative_review import build_negative_review_pack
 from slide2study.parsing import build_parse_report, get_parser
 from slide2study.retrieval import BM25Retriever, DenseRetriever
 from slide2study.review import build_review_pack
@@ -275,6 +276,16 @@ def build_parser() -> argparse.ArgumentParser:
     dense_mining.add_argument("--levels", type=_parse_levels, default={"passage"})
     dense_mining.add_argument("--top-k", type=int, default=20)
     dense_mining.add_argument("--split", choices=sorted(DATASET_SPLITS), default="train")
+    dense_mining.add_argument("--hard-per-query", type=int)
+    dense_mining.add_argument("--medium-per-query", type=int)
+    dense_mining.add_argument("--easy-per-query", type=int)
+
+    negative_review = commands.add_parser(
+        "build-negative-review-pack", help="Build a private HTML review workflow for triplets"
+    )
+    negative_review.add_argument("corpus", type=Path)
+    negative_review.add_argument("triplets", type=Path)
+    negative_review.add_argument("--output", type=Path, required=True)
     return parser
 
 
@@ -636,12 +647,19 @@ def main(argv: list[str] | None = None) -> int:
         mining_examples = [example for example in examples if example.get("split") == args.split]
         if not mining_examples:
             raise ValueError(f"The dataset has no examples in split {args.split!r}")
+        requested_limits = {
+            "hard": args.hard_per_query,
+            "medium": args.medium_per_query,
+            "easy": args.easy_per_query,
+        }
+        limits = {name: value for name, value in requested_limits.items() if value is not None}
         triplets = mine_hard_negatives(
             retriever,
             mining_examples,
             chunks,
             args.top_k,
             miner_name=f"dense:{model_name}",
+            max_per_query=limits,
         )
         write_jsonl((triplet.to_dict() for triplet in triplets), args.output)
         _print_json(
@@ -650,10 +668,20 @@ def main(argv: list[str] | None = None) -> int:
                 "split": args.split,
                 "examples": len(mining_examples),
                 "triplets": len(triplets),
+                "difficulty_counts": {
+                    difficulty: sum(item.difficulty == difficulty for item in triplets)
+                    for difficulty in ("hard", "medium", "easy")
+                },
+                "max_per_query": limits or None,
                 "output": str(args.output),
             },
             indent=2,
         )
+        return 0
+    if args.command == "build-negative-review-pack":
+        chunks = load_chunks(args.corpus)
+        triplets = list(read_jsonl(args.triplets))
+        _print_json(build_negative_review_pack(triplets, chunks, args.output), indent=2)
         return 0
     if args.command == "inspect":
         pages = get_parser(args.document).parse(args.document)

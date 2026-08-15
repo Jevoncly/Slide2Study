@@ -25,7 +25,8 @@ from slide2study.fusion import (
 from slide2study.identifiers import stable_document_id
 from slide2study.interfaces import MultimodalPageEncoder
 from slide2study.io import read_jsonl, write_jsonl
-from slide2study.models import Chunk, Page, RenderedPage
+from slide2study.models import Chunk, Page, RenderedPage, SearchResult
+from slide2study.negative_review import build_negative_review_pack
 from slide2study.parsing import (
     PDFParser,
     PPTXParser,
@@ -68,6 +69,17 @@ class FakeTextEncoder:
 
     def encode_queries(self, queries: list[str]) -> list[list[float]]:
         return [[0.0, 1.0] for _ in queries]
+
+
+class StaticRetriever:
+    def __init__(self, chunks: list[Chunk]):
+        self.chunks = chunks
+
+    def search(self, query: str, top_k: int = 5) -> list[SearchResult]:
+        return [
+            SearchResult(chunk, 1.0 / rank, rank)
+            for rank, chunk in enumerate(self.chunks[:top_k], 1)
+        ]
 
 
 class BaselineTests(unittest.TestCase):
@@ -311,6 +323,49 @@ class BaselineTests(unittest.TestCase):
         self.assertEqual(triplets[0].positive_chunk_id, "passage-1")
         self.assertEqual(triplets[0].negative_chunk_id, "passage-2")
         self.assertEqual(triplets[0].miner, "dense:test")
+        self.assertEqual(triplets[0].difficulty, "hard")
+
+    def test_hard_negative_mining_applies_difficulty_quotas(self):
+        chunks = [
+            Chunk(f"chunk-{index}", "deck", index, index, f"text {index}")
+            for index in range(1, 14)
+        ]
+        triplets = mine_hard_negatives(
+            StaticRetriever(chunks),
+            [
+                {
+                    "query": "topic",
+                    "document_id": "deck",
+                    "relevant_pages": [1],
+                }
+            ],
+            chunks,
+            top_k=13,
+            max_per_query={"hard": 1, "medium": 1, "easy": 1},
+        )
+        self.assertEqual([item.difficulty for item in triplets], ["hard", "medium", "easy"])
+
+    def test_negative_review_pack_contains_pairs_and_export_controls(self):
+        chunks = [
+            Chunk("positive", "deck", 1, 1, "correct evidence"),
+            Chunk("negative", "deck", 2, 2, "hard distractor"),
+        ]
+        triplet = {
+            "query": "question",
+            "positive_chunk_id": "positive",
+            "negative_chunk_id": "negative",
+            "negative_rank": 2,
+            "miner": "dense:test",
+            "difficulty": "hard",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "review.html"
+            summary = build_negative_review_pack([triplet], chunks, output)
+            html = output.read_text(encoding="utf-8")
+        self.assertEqual(summary["reviewable"], 1)
+        self.assertEqual(summary["difficulties"], {"hard": 1})
+        self.assertIn("Slide2Study 困难负例复核", html)
+        self.assertIn("false_negative", html)
 
     def test_parse_report_flags_pages_that_need_vision(self):
         pages = [
@@ -528,6 +583,7 @@ class BaselineTests(unittest.TestCase):
             report_path = root / "report.json"
             hybrid_report_path = root / "hybrid-report.json"
             negatives_path = root / "triplets.jsonl"
+            negative_review_path = root / "negative-review.html"
             write_jsonl((chunk.to_dict() for chunk in chunks), corpus)
             write_jsonl([example], dataset)
             with patch(
@@ -602,14 +658,28 @@ class BaselineTests(unittest.TestCase):
                     ),
                     0,
                 )
+                self.assertEqual(
+                    cli_main(
+                        [
+                            "build-negative-review-pack",
+                            str(corpus),
+                            str(negatives_path),
+                            "--output",
+                            str(negative_review_path),
+                        ]
+                    ),
+                    0,
+                )
             report = json.loads(report_path.read_text(encoding="utf-8"))
             hybrid_report = json.loads(hybrid_report_path.read_text(encoding="utf-8"))
             triplets = list(read_jsonl(negatives_path))
+            negative_review_html = negative_review_path.read_text(encoding="utf-8")
         self.assertEqual(report["experiment"]["model"], "fake-dense")
         self.assertEqual(report["metrics"]["recall_at_k"], 1.0)
         self.assertEqual(hybrid_report["metrics"]["hybrid_rrf"]["recall_at_k"], 1.0)
         self.assertEqual(len(triplets), 1)
         self.assertTrue(triplets[0]["miner"].startswith("dense:"))
+        self.assertIn("困难负例复核", negative_review_html)
 
     def test_page_embedding_cache_checks_model_and_image_hash(self):
         page = RenderedPage("deck", 1, "page.png", "deck.pdf", 100, 80, "abc")

@@ -8,11 +8,11 @@
 - 课程测试数据：`D:\important files\Unimelb\S1`
 - GitHub：<https://github.com/Jevoncly/Slide2Study>
 - 当前分支：`agent/document-parsing`
-- 上一阶段提交：`f54f9b6 Add cached dense text retrieval baseline`
+- 上一阶段提交：`7aaafac Add dense fusion and hard negative mining`
 - 远程跟踪分支：`origin/agent/document-parsing`
 - Draft PR：<https://github.com/Jevoncly/Slide2Study/pull/1>
 
-远程分支已推送至 `9f691b4`；`f54f9b6` 及本阶段文本融合工作尚未推送。
+远程分支已推送至 `7aaafac`；本阶段负例分层与审阅工作尚未推送。
 
 ## 2. 项目目标
 
@@ -153,11 +153,21 @@ multimodal page retriever。
 - 四课程 train split 15 条候选问题生成 281 个 triplet、101 个去重负例，覆盖全部 15 条问题。
 - 对输出执行页面回查，相关页被误标为负例的数量为 0；每条记录保留 miner 和原始排名。
 
+### 3.13 困难负例分层与人工复核
+
+- 按 Dense 原始排名标记 hard（1–5）、medium（6–10）和 easy（11+）。
+- `dense-mine-negatives` 支持三档每题配额，避免训练集被单一难度或单一问题主导。
+- 四课程 train split 使用每题 2 hard、1 medium、1 easy，得到 60 条平衡候选：hard 30、
+  medium 15、easy 15，覆盖全部 15 条训练问题。
+- `build-negative-review-pack` 展示 query、正例、候选负例、页码、rank、难度和 miner，支持
+  有效负例、假负例、不确定三种决定、备注、本地进度和 JSONL 导出。
+- 本地审阅包 60/60 条可解析、缺失 chunk 0；导出脚本已通过 JavaScript 语法检查。
+
 ## 4. 验证证据
 
 ### 4.1 自动化测试
 
-- 当前测试：34/34 通过；Ruff 检查通过。
+- 当前测试：36/36 通过；Ruff 检查通过。
 - 测试覆盖：解析、质量诊断、三层 chunk、层级校验、BM25、评测指标、hard negatives、
   页面清单、PDF/PPTX 渲染流程、向量缓存及哈希校验、视觉页面排序、页面级评测、
   BM25 页面映射、页面/chunk 加权 RRF、逐题诊断、Dense 排序、chunk 缓存及文本哈希校验、
@@ -239,6 +249,8 @@ slide2study dense-index artifacts\course_chunks.jsonl --output artifacts\dense_e
 slide2study dense-evaluate artifacts\course_chunks.jsonl data\private\eval.jsonl --cache artifacts\dense_embeddings.json --split test --top-k 5 --output artifacts\dense_report.json
 slide2study text-hybrid-evaluate artifacts\course_chunks.jsonl data\private\eval.jsonl --cache artifacts\dense_embeddings.json --bm25-weight 0.25 --dense-weight 1 --split test --output artifacts\text_hybrid_report.json
 slide2study dense-mine-negatives artifacts\course_chunks.jsonl data\private\eval.jsonl --cache artifacts\dense_embeddings.json --split train --top-k 20 --output artifacts\dense_triplets.jsonl
+slide2study dense-mine-negatives artifacts\course_chunks.jsonl data\private\eval.jsonl --cache artifacts\dense_embeddings.json --split train --hard-per-query 2 --medium-per-query 1 --easy-per-query 1 --output artifacts\balanced_triplets.jsonl
+slide2study build-negative-review-pack artifacts\course_chunks.jsonl artifacts\balanced_triplets.jsonl --output artifacts\negative_review\index.html
 ```
 
 `artifacts/` 和 `data/raw/` 已被 Git 忽略。不要把墨尔本大学课件原文件提交到公开仓库。
@@ -248,7 +260,7 @@ slide2study dense-mine-negatives artifacts\course_chunks.jsonl data\private\eval
 1. 从 3-5 门课程建立人工校验的 QA 数据集，每门先做 30-50 条。
 2. 区分 text、formula、table/chart、visual-only、cross-page 五类问题。
 3. 用更大的 dev 集验证题型感知门控，避免 CLIP 降低文本题和跨页题排序。
-4. 人工复核 Dense 困难负例，去除语义相关但未标注的假负例并控制难度比例。
+4. 使用本地审阅包人工复核 60 条平衡负例，去除语义相关但未标注的假负例。
 5. 使用复核后的 triplet 微调 Reranker，比较能否在不损害 Dense 首位命中的前提下改善困难查询。
 6. 在人工 test 集完成消融，然后再接带引用生成。
 
