@@ -8,11 +8,11 @@
 - 课程测试数据：`D:\important files\Unimelb\S1`
 - GitHub：<https://github.com/Jevoncly/Slide2Study>
 - 当前分支：`agent/document-parsing`
-- 上一阶段提交：`072553f Add private QA review workflow`
+- 上一阶段提交：`9f691b4 Add BM25 CLIP fusion diagnostics`
 - 远程跟踪分支：`origin/agent/document-parsing`
 - Draft PR：<https://github.com/Jevoncly/Slide2Study/pull/1>
 
-远程分支已包含多文档 pilot 提交 `bb4dbb2`；`072553f` 及本阶段工作尚未推送。
+远程分支已推送至 `9f691b4`；本阶段 Dense Text 工作在此基线上继续。
 
 ## 2. 项目目标
 
@@ -123,14 +123,27 @@ multimodal page retriever。
 - 逐题上，一题由第 2 名升至第 1 名，另一题由第 1 名降至第 2 名；跨页题还丢失了一个相关页。
 - 所有结果仍基于 `candidate` 标注，应视为工程基线和失败分析，不是正式消融结论。
 
+### 3.10 Dense Text Retriever 候选基线
+
+- `SentenceTransformersTextEncoder` 支持批量编码、CPU/GPU 设备选择和非对称检索前缀。
+- 默认模型为 `intfloat/multilingual-e5-small`，问题使用 `query: `，证据使用 `passage: `。
+- chunk 向量缓存记录模型、前缀、chunk ID 和文本 SHA-256，语料变化时拒绝加载旧向量。
+- `DenseRetriever` 使用归一化向量和余弦相似度返回 Top-K chunk；CLI 为 `dense-index`、
+  `dense-evaluate`。
+- 四课程 124 个 passage 已生成 384 维缓存；当前运行使用 CPU。
+- dev split（4 条）：Recall@5、MRR、nDCG@5 均为 1.0。
+- test split（9 条）：Recall@5 1.0、MRR 1.0、nDCG@5 0.9739，超过 BM25 候选基线。
+- 机器辅助问题可能与原文措辞接近；在人工复核和困难负例扩充前，这不是正式泛化结论。
+
 ## 4. 验证证据
 
 ### 4.1 自动化测试
 
-- 当前测试：30/30 通过；Ruff 检查通过。
+- 当前测试：32/32 通过；Ruff 检查通过。
 - 测试覆盖：解析、质量诊断、三层 chunk、层级校验、BM25、评测指标、hard negatives、
   页面清单、PDF/PPTX 渲染流程、向量缓存及哈希校验、视觉页面排序、页面级评测、
-  BM25 页面映射、加权 RRF、逐题诊断、评测集校验及分类型报告。
+  BM25 页面映射、加权 RRF、逐题诊断、Dense 排序、chunk 缓存及文本哈希校验、
+  评测集校验及分类型报告。
 
 运行：
 
@@ -171,8 +184,9 @@ python -m unittest discover -s tests -v
 - 当前 Torch 为 CPU 版本；真实 CLIP 可以运行，但页面首次编码速度尚未获得 GPU 加速。
 - 当前机器没有 LibreOffice；PPTX 转换路径已由自动化测试覆盖，但只对 PDF 做过真实渲染。
 - 已有四门课 28 条机器辅助候选 QA，但尚未人工复核，不能作为正式测试集或可靠消融结论。
-- 已有 BM25 + CLIP RRF 工程基线，但候选 test 上未超过 BM25；尚未实现 Dense Text
-  Retriever、题型感知融合、Reranker 训练和多模态对比学习。
+- 已有 BM25 + CLIP RRF 工程基线，但候选 test 上未超过 BM25；Dense 候选基线虽达到很高
+  指标，尚未经过人工测试集验证。尚未实现 BM25 + Dense 融合、题型感知融合、Reranker
+  训练和多模态对比学习。
 - 尚未实现带引用答案、笔记、闪卡、题库和 UI。
 - 视觉页数量较多；后续需要通过标注集校准视觉风险阈值，而不是只依赖启发式规则。
 
@@ -203,6 +217,8 @@ slide2study visual-search artifacts\pages\lecture.jsonl "Which diagram shows IPv
 slide2study visual-index --manifests artifacts\pages\*.jsonl --output artifacts\page_embeddings.json
 slide2study visual-evaluate artifacts\course_chunks.jsonl data\private\eval.jsonl --manifests artifacts\pages\*.jsonl --cache artifacts\page_embeddings.json --split test --top-k 5 --output artifacts\clip_report.json
 slide2study hybrid-evaluate artifacts\course_chunks.jsonl data\private\eval.jsonl --manifests artifacts\pages\*.jsonl --cache artifacts\page_embeddings.json --split test --top-k 5 --output artifacts\hybrid_report.json
+slide2study dense-index artifacts\course_chunks.jsonl --output artifacts\dense_embeddings.json --levels passage
+slide2study dense-evaluate artifacts\course_chunks.jsonl data\private\eval.jsonl --cache artifacts\dense_embeddings.json --split test --top-k 5 --output artifacts\dense_report.json
 ```
 
 `artifacts/` 和 `data/raw/` 已被 Git 忽略。不要把墨尔本大学课件原文件提交到公开仓库。
@@ -212,8 +228,8 @@ slide2study hybrid-evaluate artifacts\course_chunks.jsonl data\private\eval.json
 1. 从 3-5 门课程建立人工校验的 QA 数据集，每门先做 30-50 条。
 2. 区分 text、formula、table/chart、visual-only、cross-page 五类问题。
 3. 用更大的 dev 集验证题型感知门控，避免 CLIP 降低文本题和跨页题排序。
-4. 实现 Dense Text Retriever 和 BM25 + Dense/Visual Hybrid Retrieval。
-5. 挖掘 hard negatives 并微调 Reranker。
+4. 实现 BM25 + Dense/Visual Hybrid Retrieval，并优先保护 Dense 已命中的结果。
+5. 从 Dense/BM25 结果挖掘困难负例并微调 Reranker。
 6. 在人工 test 集完成消融，然后再接带引用生成。
 
 短期最重要的不是继续堆功能，而是先获得可信的评测集和 baseline 数字。

@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from slide2study.chunking import HierarchicalChunker, validate_chunk_hierarchy
 from slide2study.cli import main as cli_main
+from slide2study.dense import load_chunk_embedding_cache, write_chunk_embedding_cache
 from slide2study.evaluation import (
     compare_page_retrievers,
     evaluate,
@@ -27,7 +28,7 @@ from slide2study.parsing import (
     build_parse_report,
     prepare_pages_for_retrieval,
 )
-from slide2study.retrieval import BM25Retriever, mixed_tokenize
+from slide2study.retrieval import BM25Retriever, DenseRetriever, mixed_tokenize
 from slide2study.review import build_review_pack
 from slide2study.training import mine_hard_negatives
 from slide2study.vision import (
@@ -48,6 +49,17 @@ class FakeMultimodalEncoder(MultimodalPageEncoder):
 
     def encode_pages(self, image_paths: list[str]) -> list[list[float]]:
         return [[1.0, 0.0], [0.0, 1.0]][: len(image_paths)]
+
+    def encode_queries(self, queries: list[str]) -> list[list[float]]:
+        return [[0.0, 1.0] for _ in queries]
+
+
+class FakeTextEncoder:
+    def __init__(self, *_args, **_kwargs):
+        pass
+
+    def encode_documents(self, texts: list[str]) -> list[list[float]]:
+        return [[1.0, 0.0], [0.0, 1.0]][: len(texts)]
 
     def encode_queries(self, queries: list[str]) -> list[list[float]]:
         return [[0.0, 1.0] for _ in queries]
@@ -409,6 +421,91 @@ class BaselineTests(unittest.TestCase):
         )
         self.assertEqual(diagnostics[0]["systems"]["bm25"]["first_relevant_rank"], 1)
         self.assertEqual(diagnostics[0]["systems"]["hybrid"]["first_relevant_rank"], 2)
+
+    def test_dense_retrieval_and_cache_validate_chunk_text(self):
+        chunks = [
+            Chunk("chunk-1", "deck", 1, 1, "alpha"),
+            Chunk("chunk-2", "deck", 2, 2, "beta"),
+        ]
+        retriever = DenseRetriever(chunks, FakeTextEncoder())
+        self.assertEqual(retriever.search("beta", 1)[0].chunk.chunk_id, "chunk-2")
+        with tempfile.TemporaryDirectory() as directory:
+            cache = Path(directory) / "dense.json"
+            write_chunk_embedding_cache(
+                chunks,
+                [[1.0, 0.0], [0.0, 1.0]],
+                cache,
+                "fake-dense",
+                "query: ",
+                "passage: ",
+            )
+            embeddings, metadata = load_chunk_embedding_cache(chunks, cache, "fake-dense")
+            self.assertEqual(metadata["query_prefix"], "query: ")
+            self.assertEqual(embeddings[1], [0.0, 1.0])
+            changed = [Chunk("chunk-1", "deck", 1, 1, "changed"), chunks[1]]
+            with self.assertRaisesRegex(ValueError, "text mismatch"):
+                load_chunk_embedding_cache(changed, cache)
+
+    def test_dense_index_and_evaluate_cli_reuse_chunk_cache(self):
+        chunks = [
+            Chunk("chunk-1", "deck", 1, 1, "alpha"),
+            Chunk("chunk-2", "deck", 2, 2, "beta"),
+        ]
+        example = {
+            "id": "dense-q1",
+            "query": "beta",
+            "document_id": "deck",
+            "relevant_pages": [2],
+            "relevant_chunk_ids": ["chunk-2"],
+            "question_type": "text",
+            "split": "test",
+            "annotation_status": "verified",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            corpus = root / "corpus.jsonl"
+            dataset = root / "dataset.jsonl"
+            cache = root / "dense.json"
+            report_path = root / "report.json"
+            write_jsonl((chunk.to_dict() for chunk in chunks), corpus)
+            write_jsonl([example], dataset)
+            with patch(
+                "slide2study.cli.SentenceTransformersTextEncoder", FakeTextEncoder
+            ), redirect_stdout(io.StringIO()):
+                self.assertEqual(
+                    cli_main(
+                        [
+                            "dense-index",
+                            str(corpus),
+                            "--output",
+                            str(cache),
+                            "--model",
+                            "fake-dense",
+                        ]
+                    ),
+                    0,
+                )
+                self.assertEqual(
+                    cli_main(
+                        [
+                            "dense-evaluate",
+                            str(corpus),
+                            str(dataset),
+                            "--cache",
+                            str(cache),
+                            "--split",
+                            "test",
+                            "--top-k",
+                            "1",
+                            "--output",
+                            str(report_path),
+                        ]
+                    ),
+                    0,
+                )
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+        self.assertEqual(report["experiment"]["model"], "fake-dense")
+        self.assertEqual(report["metrics"]["recall_at_k"], 1.0)
 
     def test_page_embedding_cache_checks_model_and_image_hash(self):
         page = RenderedPage("deck", 1, "page.png", "deck.pdf", 100, 80, "abc")

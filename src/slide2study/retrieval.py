@@ -4,7 +4,9 @@ import math
 import re
 from abc import ABC, abstractmethod
 from collections import Counter, defaultdict
+from collections.abc import Sequence
 
+from slide2study.interfaces import TextEncoder
 from slide2study.models import Chunk, SearchResult
 
 
@@ -82,7 +84,52 @@ class BM25Retriever(Retriever):
 
 
 class DenseRetriever(Retriever):
-    """Extension point for a trained text or page-image bi-encoder."""
+    """Cosine-similarity retrieval over cached or freshly encoded chunks."""
+
+    def __init__(
+        self,
+        chunks: Sequence[Chunk],
+        encoder: TextEncoder,
+        embeddings: Sequence[Sequence[float]] | None = None,
+    ):
+        self.chunks = list(chunks)
+        self.encoder = encoder
+        vectors = embeddings
+        if vectors is None:
+            vectors = encoder.encode_documents([chunk.text for chunk in self.chunks])
+        self.embeddings = _validate_and_normalize(vectors, len(self.chunks))
 
     def search(self, query: str, top_k: int = 5) -> list[SearchResult]:
-        raise NotImplementedError("Connect an embedding model and vector index here")
+        if top_k <= 0:
+            return []
+        query_vectors = self.encoder.encode_queries([query])
+        query_vector = _validate_and_normalize(query_vectors, 1)[0]
+        if self.embeddings and len(query_vector) != len(self.embeddings[0]):
+            raise ValueError("Query and chunk embeddings must have the same dimensions")
+        scored = [
+            (sum(left * right for left, right in zip(query_vector, vector)), index)
+            for index, vector in enumerate(self.embeddings)
+        ]
+        scored.sort(key=lambda item: (-item[0], self.chunks[item[1]].chunk_id))
+        return [
+            SearchResult(self.chunks[index], round(score, 8), rank)
+            for rank, (score, index) in enumerate(scored[:top_k], 1)
+        ]
+
+
+def _validate_and_normalize(
+    embeddings: Sequence[Sequence[float]], expected_count: int
+) -> list[list[float]]:
+    vectors = [[float(value) for value in vector] for vector in embeddings]
+    if len(vectors) != expected_count:
+        raise ValueError(f"Expected {expected_count} embedding(s), received {len(vectors)}")
+    dimensions = {len(vector) for vector in vectors}
+    if len(dimensions) > 1 or (vectors and not next(iter(dimensions))):
+        raise ValueError("Embeddings must have one non-zero shared dimension")
+    normalized = []
+    for vector in vectors:
+        norm = math.sqrt(sum(value * value for value in vector))
+        if not math.isfinite(norm) or norm == 0:
+            raise ValueError("Embeddings must contain finite non-zero vectors")
+        normalized.append([value / norm for value in vector])
+    return normalized

@@ -7,6 +7,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from slide2study.chunking import CHUNK_LEVELS, HierarchicalChunker
+from slide2study.dense import (
+    SentenceTransformersTextEncoder,
+    load_chunk_embedding_cache,
+    write_chunk_embedding_cache,
+)
 from slide2study.evaluation import (
     DATASET_SPLITS,
     compare_page_retrievers,
@@ -17,7 +22,7 @@ from slide2study.evaluation import (
 from slide2study.fusion import BM25PageRetriever, ReciprocalRankFusionRetriever
 from slide2study.io import load_chunks, read_jsonl, write_jsonl
 from slide2study.parsing import build_parse_report, get_parser
-from slide2study.retrieval import BM25Retriever
+from slide2study.retrieval import BM25Retriever, DenseRetriever
 from slide2study.review import build_review_pack
 from slide2study.training import mine_hard_negatives
 from slide2study.vision import (
@@ -157,6 +162,32 @@ def build_parser() -> argparse.ArgumentParser:
     hybrid_evaluation.add_argument("--visual-weight", type=float, default=1.0)
     hybrid_evaluation.add_argument("--split", choices=sorted(DATASET_SPLITS))
     hybrid_evaluation.add_argument("--output", type=Path)
+
+    dense_index = commands.add_parser(
+        "dense-index", help="Encode text chunks once and save a verified vector cache"
+    )
+    dense_index.add_argument("corpus", type=Path)
+    dense_index.add_argument("--output", type=Path, required=True)
+    dense_index.add_argument("--model", default="intfloat/multilingual-e5-small")
+    dense_index.add_argument("--device")
+    dense_index.add_argument("--batch-size", type=int, default=32)
+    dense_index.add_argument("--levels", type=_parse_levels, default={"passage"})
+    dense_index.add_argument("--query-prefix", default="query: ")
+    dense_index.add_argument("--document-prefix", default="passage: ")
+
+    dense_evaluation = commands.add_parser(
+        "dense-evaluate", help="Evaluate cached dense text retrieval"
+    )
+    dense_evaluation.add_argument("corpus", type=Path)
+    dense_evaluation.add_argument("dataset", type=Path)
+    dense_evaluation.add_argument("--cache", type=Path, required=True)
+    dense_evaluation.add_argument("--model")
+    dense_evaluation.add_argument("--device")
+    dense_evaluation.add_argument("--batch-size", type=int, default=32)
+    dense_evaluation.add_argument("--levels", type=_parse_levels, default={"passage"})
+    dense_evaluation.add_argument("--top-k", type=int, default=5)
+    dense_evaluation.add_argument("--split", choices=sorted(DATASET_SPLITS))
+    dense_evaluation.add_argument("--output", type=Path)
 
     search = commands.add_parser("search", help="Search a chunk corpus with BM25")
     search.add_argument("corpus", type=Path)
@@ -375,6 +406,89 @@ def main(argv: list[str] | None = None) -> int:
             "query_diagnostics": compare_page_retrievers(
                 retrievers, evaluation_examples, args.diagnostic_k
             ),
+        }
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(
+                json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+            report["output"] = str(args.output)
+        _print_json(report, indent=2)
+        return 0
+    if args.command == "dense-index":
+        corpus_chunks = load_chunks(args.corpus)
+        chunks = [chunk for chunk in corpus_chunks if chunk.level in args.levels]
+        encoder = SentenceTransformersTextEncoder(
+            args.model,
+            args.device,
+            args.batch_size,
+            args.query_prefix,
+            args.document_prefix,
+        )
+        embeddings = encoder.encode_documents([chunk.text for chunk in chunks])
+        write_chunk_embedding_cache(
+            chunks,
+            embeddings,
+            args.output,
+            args.model,
+            args.query_prefix,
+            args.document_prefix,
+        )
+        _print_json(
+            {
+                "model": args.model,
+                "levels": sorted(args.levels),
+                "chunks": len(chunks),
+                "dimensions": len(embeddings[0]) if embeddings else 0,
+                "output": str(args.output),
+            },
+            indent=2,
+        )
+        return 0
+    if args.command == "dense-evaluate":
+        corpus_chunks = load_chunks(args.corpus)
+        chunks = [chunk for chunk in corpus_chunks if chunk.level in args.levels]
+        embeddings, cache_metadata = load_chunk_embedding_cache(chunks, args.cache, args.model)
+        model_name = args.model or cache_metadata["model"]
+        encoder = SentenceTransformersTextEncoder(
+            model_name,
+            args.device,
+            args.batch_size,
+            cache_metadata["query_prefix"],
+            cache_metadata["document_prefix"],
+        )
+        retriever = DenseRetriever(chunks, encoder, embeddings)
+        examples = list(read_jsonl(args.dataset))
+        validation = validate_dataset(
+            examples,
+            require_question_types=True,
+            require_splits=True,
+            require_document_ids=True,
+            require_annotation_statuses=True,
+            chunks=corpus_chunks,
+        )
+        evaluation_examples = (
+            [example for example in examples if example.get("split") == args.split]
+            if args.split
+            else examples
+        )
+        if not evaluation_examples:
+            raise ValueError(f"The dataset has no examples in split {args.split!r}")
+        report = {
+            "experiment": {
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "retriever": "dense-text",
+                "model": model_name,
+                "top_k": args.top_k,
+                "levels": sorted(args.levels),
+                "split": args.split or "all",
+                "evaluated_queries": len(evaluation_examples),
+                "corpus": str(args.corpus.resolve()),
+                "cache": str(args.cache.resolve()),
+                "dataset": str(args.dataset.resolve()),
+            },
+            "dataset": validation.to_dict(),
+            "metrics": evaluate(retriever, evaluation_examples, args.top_k).to_dict(),
         }
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)

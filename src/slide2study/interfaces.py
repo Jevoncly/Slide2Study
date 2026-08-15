@@ -40,6 +40,14 @@ class PageRetriever(Protocol):
     def search(self, query: str, top_k: int = 5) -> list[PageSearchResult]: ...
 
 
+class TextEncoder(Protocol):
+    """Batch encoder for asymmetric query-to-passage retrieval."""
+
+    def encode_documents(self, texts: list[str]) -> list[list[float]]: ...
+
+    def encode_queries(self, queries: list[str]) -> list[list[float]]: ...
+
+
 class Reranker(ABC):
     """Interface for a cross-encoder trained with mined hard negatives."""
 

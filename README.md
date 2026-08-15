@@ -49,6 +49,8 @@ slide2study visual-search artifacts/pages/lecture.jsonl "IPv6 header fields" --t
 slide2study visual-index --manifests artifacts/pages/*.jsonl --output artifacts/page_embeddings.json
 slide2study visual-evaluate artifacts/course_chunks.jsonl data/private/eval.jsonl --manifests artifacts/pages/*.jsonl --cache artifacts/page_embeddings.json --split test --top-k 5 --output artifacts/clip_report.json
 slide2study hybrid-evaluate artifacts/course_chunks.jsonl data/private/eval.jsonl --manifests artifacts/pages/*.jsonl --cache artifacts/page_embeddings.json --split test --top-k 5 --output artifacts/hybrid_report.json
+slide2study dense-index artifacts/course_chunks.jsonl --output artifacts/dense_embeddings.json --levels passage
+slide2study dense-evaluate artifacts/course_chunks.jsonl data/private/eval.jsonl --cache artifacts/dense_embeddings.json --split test --top-k 5 --output artifacts/dense_report.json
 ```
 
 `render-pages` 为每页生成稳定的 PNG、尺寸、原始文档路径、页码、SHA-256、页面角色和
@@ -60,6 +62,10 @@ CLIP 时，SentenceTransformers 会下载指定模型；默认模型是 `clip-Vi
 `hybrid-evaluate` 将 passage BM25 结果映射到页面，以加权 Reciprocal Rank Fusion 融合
 BM25 与 CLIP；同一报告包含三路指标及逐题 Top 页面、命中状态和首个正确页排名。融合权重
 应在 dev split 固定后再运行 test split，避免用测试集调参。
+
+`dense-index` 默认使用 `intfloat/multilingual-e5-small`，按模型要求为问题和证据分别添加
+`query: ` 与 `passage: ` 前缀，批量生成归一化文本向量。缓存记录模型、前缀、chunk ID、
+文本 SHA-256 和向量；`dense-evaluate` 校验缓存后复用同一评测框架。
 
 每条检索结果都包含基于文件内容 SHA-256 生成的稳定 `document_id`、`page_start`、
 `page_end`、`section` 和稳定的 `chunk_id`，可直接作为引用生成的 evidence。原始文件名保存在
@@ -98,6 +104,7 @@ src/slide2study/
   parsing.py       # PDF/PPTX/TXT 页面解析与质量诊断
   chunking.py      # 跨页章节识别与 section/page/passage 三级切块
   retrieval.py     # BM25 baseline 与 Dense 接口
+  dense.py         # 多语言文本编码与可校验 chunk 向量缓存
   evaluation.py    # 数据校验、检索指标、分类型与延迟报告
   review.py        # 私有 QA 人工复核 HTML 与导出
   interfaces.py    # Reranker / 多模态编码 / 引用生成接口

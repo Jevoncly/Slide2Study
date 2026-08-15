@@ -94,7 +94,7 @@ Slide2Study 是一个面向算法工程师求职展示的多模态、结构感�
 - [ ] 中文单字分词 vs 单字＋二元词
 - [ ] 页面级 vs 局部 chunk 检索
 - [ ] 无 overlap vs 有 overlap
-- [ ] BM25 vs Dense
+- [x] BM25 vs Dense
 - [ ] Dense vs Hybrid
 - [ ] 有无 Reranker
 - [x] 纯文本 vs 页面视觉检索
@@ -103,13 +103,13 @@ Slide2Study 是一个面向算法工程师求职展示的多模态、结构感�
 
 ### 8. Dense Text Retriever
 
-- [ ] 建立 embedding 模型接口
-- [ ] 批量编码 chunk
-- [ ] 建立向量索引
-- [ ] 支持 Top-K 向量检索
-- [ ] 支持 GPU/CPU 运行
-- [ ] 缓存文档向量
-- [ ] 与 BM25 使用同一套评测框架
+- [x] 建立 embedding 模型接口
+- [x] 批量编码 chunk
+- [x] 建立向量索引
+- [x] 支持 Top-K 向量检索
+- [x] 支持 GPU/CPU 运行
+- [x] 缓存文档向量
+- [x] 与 BM25 使用同一套评测框架
 
 候选 baseline：
 
@@ -262,5 +262,5 @@ Slide2Study 是一个面向算法工程师求职展示的多模态、结构感�
 8. 实现带引用生成
 9. 完成 UI、实验报告和项目展示
 
-当前下一项：人工复核并扩充 3–5 门课程 QA，扩大 dev/test 后验证题型感知融合，再实现
-Dense Text 与 BM25 + Dense/Visual Hybrid Retrieval。
+当前下一项：人工复核并扩充 3–5 门课程 QA，加入困难负例并验证 Dense 泛化效果，再实现
+BM25 + Dense/Visual Hybrid Retrieval。
