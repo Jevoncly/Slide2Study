@@ -6,16 +6,22 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
+from slide2study.models import Chunk
 from slide2study.retrieval import Retriever
 
 
 QUESTION_TYPES = frozenset({"text", "formula", "table_chart", "visual_only", "cross_page"})
+DATASET_SPLITS = frozenset({"train", "dev", "test"})
+ANNOTATION_STATUSES = frozenset({"candidate", "verified"})
 
 
 @dataclass(slots=True)
 class DatasetValidationSummary:
     examples: int
     question_types: dict[str, int]
+    splits: dict[str, int] = field(default_factory=dict)
+    documents: dict[str, int] = field(default_factory=dict)
+    annotation_statuses: dict[str, int] = field(default_factory=dict)
     warnings: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
@@ -23,6 +29,9 @@ class DatasetValidationSummary:
             "valid": True,
             "examples": self.examples,
             "question_types": self.question_types,
+            "splits": self.splits,
+            "documents": self.documents,
+            "annotation_statuses": self.annotation_statuses,
             "warnings": self.warnings,
         }
 
@@ -65,13 +74,27 @@ class _QueryMetrics:
 
 
 def validate_dataset(
-    examples: list[dict], *, require_question_types: bool = False
+    examples: list[dict],
+    *,
+    require_question_types: bool = False,
+    require_splits: bool = False,
+    require_document_ids: bool = False,
+    require_annotation_statuses: bool = False,
+    chunks: list[Chunk] | None = None,
 ) -> DatasetValidationSummary:
     """Validate the JSONL evaluation schema before an experiment is run."""
     errors: list[str] = []
     warnings: list[str] = []
     identifiers: set[str] = set()
+    queries: set[tuple[str | None, str]] = set()
     type_counts: Counter[str] = Counter()
+    split_counts: Counter[str] = Counter()
+    document_counts: Counter[str] = Counter()
+    annotation_status_counts: Counter[str] = Counter()
+    chunk_by_id = {chunk.chunk_id: chunk for chunk in chunks or []}
+    corpus_pages: dict[str, set[int]] = defaultdict(set)
+    for chunk in chunks or []:
+        corpus_pages[chunk.document_id].update(range(chunk.page_start, chunk.page_end + 1))
 
     if not examples:
         errors.append("dataset must contain at least one example")
@@ -96,24 +119,67 @@ def validate_dataset(
 
         relevant_pages = example.get("relevant_pages", [])
         relevant_chunks = example.get("relevant_chunk_ids", [])
-        if not isinstance(relevant_pages, list) or any(
+        pages_are_valid = isinstance(relevant_pages, list) and not any(
             isinstance(page, bool) or not isinstance(page, int) or page < 1
             for page in relevant_pages
-        ):
-            errors.append(f"{prefix}: relevant_pages must be a list of positive integers")
-        if not isinstance(relevant_chunks, list) or any(
+        )
+        chunks_are_valid = isinstance(relevant_chunks, list) and not any(
             not isinstance(chunk_id, str) or not chunk_id.strip()
             for chunk_id in relevant_chunks
-        ):
+        )
+        if not pages_are_valid:
+            errors.append(f"{prefix}: relevant_pages must be a list of positive integers")
+        if not chunks_are_valid:
             errors.append(f"{prefix}: relevant_chunk_ids must be a list of non-empty strings")
         if not relevant_pages and not relevant_chunks:
             errors.append(f"{prefix}: provide relevant_pages or relevant_chunk_ids")
 
         document_id = example.get("document_id")
-        if document_id is not None and (
-            not isinstance(document_id, str) or not document_id.strip()
-        ):
+        if document_id is None:
+            document_counts["unlabeled"] += 1
+            if require_document_ids:
+                errors.append(f"{prefix}: document_id is missing")
+        elif not isinstance(document_id, str) or not document_id.strip():
             errors.append(f"{prefix}: document_id must be a non-empty string when provided")
+        else:
+            document_counts[document_id] += 1
+            if chunks is not None and document_id not in corpus_pages:
+                errors.append(f"{prefix}: document_id {document_id!r} is not in the corpus")
+
+        if isinstance(query, str) and query.strip():
+            query_key = (
+                document_id if isinstance(document_id, str) else None,
+                query.strip().casefold(),
+            )
+            if query_key in queries:
+                errors.append(f"{prefix}: duplicate query within the same document")
+            queries.add(query_key)
+
+        if chunks is not None:
+            if pages_are_valid and relevant_pages and not isinstance(document_id, str):
+                errors.append(f"{prefix}: document_id is required to validate relevant_pages")
+            elif (
+                pages_are_valid
+                and isinstance(document_id, str)
+                and document_id in corpus_pages
+            ):
+                missing_pages = sorted(set(relevant_pages) - corpus_pages[document_id])
+                if missing_pages:
+                    errors.append(f"{prefix}: relevant page(s) not in the corpus: {missing_pages}")
+            if chunks_are_valid:
+                missing_chunks = sorted(set(relevant_chunks) - chunk_by_id.keys())
+                if missing_chunks:
+                    errors.append(f"{prefix}: relevant chunk(s) not in the corpus: {missing_chunks}")
+                elif isinstance(document_id, str):
+                    foreign = sorted(
+                        chunk_id
+                        for chunk_id in relevant_chunks
+                        if chunk_by_id[chunk_id].document_id != document_id
+                    )
+                    if foreign:
+                        errors.append(
+                            f"{prefix}: relevant chunk(s) belong to another document: {foreign}"
+                        )
 
         question_type = example.get("question_type")
         if question_type is None:
@@ -129,9 +195,47 @@ def validate_dataset(
         else:
             type_counts[question_type] += 1
 
+        split = example.get("split")
+        if split is None:
+            split_counts["unlabeled"] += 1
+            message = f"{prefix}: split is missing"
+            if require_splits:
+                errors.append(message)
+            else:
+                warnings.append(message)
+        elif not isinstance(split, str) or split not in DATASET_SPLITS:
+            expected = ", ".join(sorted(DATASET_SPLITS))
+            errors.append(f"{prefix}: split must be one of: {expected}")
+        else:
+            split_counts[split] += 1
+
+        annotation_status = example.get("annotation_status")
+        if annotation_status is None:
+            annotation_status_counts["unlabeled"] += 1
+            message = f"{prefix}: annotation_status is missing"
+            if require_annotation_statuses:
+                errors.append(message)
+            else:
+                warnings.append(message)
+        elif (
+            not isinstance(annotation_status, str)
+            or annotation_status not in ANNOTATION_STATUSES
+        ):
+            expected = ", ".join(sorted(ANNOTATION_STATUSES))
+            errors.append(f"{prefix}: annotation_status must be one of: {expected}")
+        else:
+            annotation_status_counts[annotation_status] += 1
+
     if errors:
         raise ValueError("Invalid evaluation dataset:\n- " + "\n- ".join(errors))
-    return DatasetValidationSummary(len(examples), dict(sorted(type_counts.items())), warnings)
+    return DatasetValidationSummary(
+        examples=len(examples),
+        question_types=dict(sorted(type_counts.items())),
+        splits=dict(sorted(split_counts.items())),
+        documents=dict(sorted(document_counts.items())),
+        annotation_statuses=dict(sorted(annotation_status_counts.items())),
+        warnings=warnings,
+    )
 
 
 def _summarize(rows: list[_QueryMetrics], *, include_types: bool) -> EvaluationSummary:

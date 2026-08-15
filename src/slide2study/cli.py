@@ -7,7 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from slide2study.chunking import CHUNK_LEVELS, HierarchicalChunker
-from slide2study.evaluation import evaluate, validate_dataset
+from slide2study.evaluation import DATASET_SPLITS, evaluate, validate_dataset
 from slide2study.io import load_chunks, read_jsonl, write_jsonl
 from slide2study.parsing import build_parse_report, get_parser
 from slide2study.retrieval import BM25Retriever
@@ -50,6 +50,14 @@ def build_parser() -> argparse.ArgumentParser:
     ingest.add_argument("--max-chars", type=int, default=500)
     ingest.add_argument("--overlap", type=int, default=1)
 
+    ingest_corpus = commands.add_parser(
+        "ingest-corpus", help="Parse multiple documents into one searchable corpus"
+    )
+    ingest_corpus.add_argument("documents", nargs="+", type=Path)
+    ingest_corpus.add_argument("--output", type=Path, required=True)
+    ingest_corpus.add_argument("--max-chars", type=int, default=500)
+    ingest_corpus.add_argument("--overlap", type=int, default=1)
+
     inspect = commands.add_parser("inspect", help="Diagnose document extraction quality")
     inspect.add_argument("document", type=Path)
     inspect.add_argument("--pages-output", type=Path)
@@ -88,6 +96,9 @@ def build_parser() -> argparse.ArgumentParser:
     evaluation.add_argument("--levels", type=_parse_levels, default=set(CHUNK_LEVELS))
     evaluation.add_argument("--output", type=Path, help="Save config and metrics as JSON")
     evaluation.add_argument(
+        "--split", choices=sorted(DATASET_SPLITS), help="Evaluate only one dataset split"
+    )
+    evaluation.add_argument(
         "--strict-dataset",
         action="store_true",
         help="Require every example to have a supported question_type",
@@ -97,6 +108,7 @@ def build_parser() -> argparse.ArgumentParser:
         "validate-dataset", help="Validate a retrieval evaluation JSONL file"
     )
     validation.add_argument("dataset", type=Path)
+    validation.add_argument("--corpus", type=Path, help="Verify labels against a chunk corpus")
     validation.add_argument(
         "--strict",
         action="store_true",
@@ -158,8 +170,17 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "validate-dataset":
         examples = list(read_jsonl(args.dataset))
+        validation_chunks = load_chunks(args.corpus) if args.corpus else None
         _print_json(
-            validate_dataset(examples, require_question_types=args.strict).to_dict(), indent=2
+            validate_dataset(
+                examples,
+                require_question_types=args.strict,
+                require_splits=args.strict,
+                require_document_ids=args.strict,
+                require_annotation_statuses=args.strict,
+                chunks=validation_chunks,
+            ).to_dict(),
+            indent=2,
         )
         return 0
     if args.command == "ingest":
@@ -175,7 +196,40 @@ def main(argv: list[str] | None = None) -> int:
         )
         _print_json(report)
         return 0
-    chunks = [chunk for chunk in load_chunks(args.corpus) if chunk.level in args.levels]
+    if args.command == "ingest-corpus":
+        all_chunks = []
+        documents = []
+        seen_document_ids: set[str] = set()
+        for document in args.documents:
+            pages = get_parser(document).parse(document)
+            chunks = HierarchicalChunker(args.max_chars, args.overlap).chunk(pages)
+            document_id = pages[0].document_id if pages else None
+            if document_id in seen_document_ids:
+                raise ValueError(f"Duplicate document content: {document}")
+            if document_id:
+                seen_document_ids.add(document_id)
+            all_chunks.extend(chunks)
+            documents.append(
+                {
+                    "source_name": document.name,
+                    "document_id": document_id,
+                    "pages": len(pages),
+                    "chunks": len(chunks),
+                }
+            )
+        write_jsonl((chunk.to_dict() for chunk in all_chunks), args.output)
+        _print_json(
+            {
+                "documents": documents,
+                "document_count": len(documents),
+                "chunks": len(all_chunks),
+                "output": str(args.output),
+            },
+            indent=2,
+        )
+        return 0
+    corpus_chunks = load_chunks(args.corpus)
+    chunks = [chunk for chunk in corpus_chunks if chunk.level in args.levels]
     retriever = BM25Retriever(chunks)
     if args.command == "search":
         results = retriever.search(args.query, args.top_k)
@@ -187,7 +241,21 @@ def main(argv: list[str] | None = None) -> int:
         write_jsonl((triplet.to_dict() for triplet in triplets), args.output)
         _print_json({"triplets": len(triplets), "output": str(args.output)})
         return 0
-    validation = validate_dataset(examples, require_question_types=args.strict_dataset)
+    validation = validate_dataset(
+        examples,
+        require_question_types=args.strict_dataset,
+        require_splits=args.strict_dataset,
+        require_document_ids=args.strict_dataset,
+        require_annotation_statuses=args.strict_dataset,
+        chunks=corpus_chunks,
+    )
+    evaluation_examples = (
+        [example for example in examples if example.get("split") == args.split]
+        if args.split
+        else examples
+    )
+    if not evaluation_examples:
+        raise ValueError(f"The dataset has no examples in split {args.split!r}")
     report = {
         "experiment": {
             "generated_at": datetime.now(timezone.utc).isoformat(),
@@ -196,9 +264,11 @@ def main(argv: list[str] | None = None) -> int:
             "levels": sorted(args.levels),
             "corpus": str(args.corpus.resolve()),
             "dataset": str(args.dataset.resolve()),
+            "split": args.split or "all",
+            "evaluated_queries": len(evaluation_examples),
         },
         "dataset": validation.to_dict(),
-        "metrics": evaluate(retriever, examples, args.top_k).to_dict(),
+        "metrics": evaluate(retriever, evaluation_examples, args.top_k).to_dict(),
     }
     if args.output:
         args.output.parent.mkdir(parents=True, exist_ok=True)

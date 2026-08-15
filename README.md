@@ -23,11 +23,12 @@ Python 3.10+：
 ```bash
 python -m pip install -e .
 slide2study ingest examples/sample_course.txt --output artifacts/sample_chunks.jsonl --max-chars 200
+slide2study ingest-corpus lecture1.pdf lecture2.pdf --output artifacts/course_chunks.jsonl
 slide2study inspect examples/sample_course.txt --pages-output artifacts/sample_pages.jsonl
 slide2study search artifacts/sample_chunks.jsonl "正则化为什么能降低模型复杂度" --top-k 3
 slide2study search artifacts/sample_chunks.jsonl "正则化" --levels page,passage
 slide2study validate-dataset examples/retrieval_eval.jsonl --strict
-slide2study evaluate artifacts/sample_chunks.jsonl examples/retrieval_eval.jsonl --top-k 3 --strict-dataset --output artifacts/bm25_report.json
+slide2study evaluate artifacts/sample_chunks.jsonl examples/retrieval_eval.jsonl --split test --top-k 3 --strict-dataset --output artifacts/bm25_report.json
 slide2study mine-negatives artifacts/sample_chunks.jsonl examples/retrieval_eval.jsonl --output artifacts/train_triplets.jsonl
 ```
 
@@ -50,7 +51,9 @@ slide2study visual-search artifacts/pages/lecture.jsonl "IPv6 header fields" --t
 视觉风险标签。`visual-search --only-vision` 可以只搜索解析阶段筛出的视觉风险页。首次使用
 CLIP 时，SentenceTransformers 会下载指定模型；默认模型是 `clip-ViT-B-32`。
 
-每条检索结果都包含 `document_id`、`page_start`、`page_end`、`section` 和稳定的 `chunk_id`，可直接作为引用生成的 evidence。
+每条检索结果都包含基于文件内容 SHA-256 生成的稳定 `document_id`、`page_start`、
+`page_end`、`section` 和稳定的 `chunk_id`，可直接作为引用生成的 evidence。原始文件名保存在
+chunk metadata 中；同一内容改名后 `document_id` 不变。
 
 `inspect` 报告还会输出 `page_roles`、`requires_vision_pages`、
 `text_retrieval_excluded_pages` 和 `removed_boilerplate_lines`。视觉页不会被删除：原始文本保存在
@@ -58,16 +61,20 @@ CLIP 时，SentenceTransformers 会下载指定模型；默认模型是 `clip-Vi
 
 ## 评测集格式
 
-每行一个查询，可标注相关页或相关 chunk。正式评测集还应提供 `document_id` 和
-`question_type`；支持的题型为 `text`、`formula`、`table_chart`、`visual_only` 和
-`cross_page`：
+每行一个查询，可标注相关页或相关 chunk。正式评测集还应提供 `document_id`、`split`、
+`question_type` 和 `annotation_status`；支持的题型为 `text`、`formula`、`table_chart`、
+`visual_only` 和 `cross_page`：
 
 ```json
-{"id":"q1","query":"验证集的作用是什么？","document_id":"lecture-01","relevant_pages":[3],"relevant_chunk_ids":[],"question_type":"text"}
+{"id":"q1","query":"验证集的作用是什么？","document_id":"doc-56bfc8ff5fcfd37a","relevant_pages":[3],"relevant_chunk_ids":[],"question_type":"text","split":"test","annotation_status":"verified"}
 ```
 
-`validate-dataset --strict` 会在实验前检查重复 ID、空问题、非法页码、缺失标注和题型。
-`evaluate --output` 会保存实验配置、数据集概况、Recall@K、Precision@K、MRR、nDCG@K、
+`annotation_status` 使用 `candidate` 或 `verified`，防止将机器辅助候选误当作人工测试集。
+`validate-dataset --corpus ... --strict` 会在实验前检查重复 ID、空问题、split、题型，以及
+文档、页码和 chunk 是否真实存在于语料中。完整人工标注流程见
+[评测集标注指南](docs/evaluation_dataset.md)。
+`evaluate --split test --output` 会只评测 test split，并保存实验配置、数据集概况、
+Recall@K、Precision@K、MRR、nDCG@K、
 无结果率、平均/P95 延迟，以及按题型拆分的指标。
 
 ## 代码结构

@@ -9,6 +9,7 @@ import tempfile
 from pathlib import Path
 from typing import Sequence
 
+from slide2study.identifiers import stable_document_id
 from slide2study.interfaces import MultimodalPageEncoder
 from slide2study.io import read_jsonl, write_jsonl
 from slide2study.models import PageSearchResult, RenderedPage
@@ -30,13 +31,14 @@ def render_document(
     if dpi <= 0:
         raise ValueError("dpi must be positive")
     target = Path(output_dir).resolve() / source.stem
+    document_id = stable_document_id(source)
     suffix = source.suffix.lower()
     if suffix == ".pdf":
         return _render_pdf(
             source,
             target,
             source,
-            source.stem,
+            document_id,
             dpi,
             pdftoppm_executable,
             page_metadata or {},
@@ -63,7 +65,7 @@ def render_document(
                 converted,
                 target,
                 source,
-                source.stem,
+                document_id,
                 dpi,
                 pdftoppm_executable,
                 page_metadata or {},

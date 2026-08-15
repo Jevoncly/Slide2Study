@@ -6,6 +6,7 @@ from collections import Counter
 from math import ceil
 from pathlib import Path
 
+from slide2study.identifiers import stable_document_id
 from slide2study.models import Page, ParseReport
 
 
@@ -22,10 +23,11 @@ class TextParser(DocumentParser):
         source = Path(path)
         _require_file(source)
         raw = source.read_text(encoding="utf-8")
+        document_id = stable_document_id(source)
         parts = re.split(r"\f|^\s*---\s*page\s*---\s*$", raw, flags=re.I | re.M)
         return [
             Page(
-                source.stem,
+                document_id,
                 number,
                 text.strip(),
                 _explicit_text_heading(text),
@@ -46,6 +48,7 @@ class PDFParser(DocumentParser):
             ) from exc
         source = Path(path)
         _require_file(source)
+        document_id = stable_document_id(source)
         reader = PdfReader(str(source))
         pages = []
         for number, pdf_page in enumerate(reader.pages, 1):
@@ -53,7 +56,7 @@ class PDFParser(DocumentParser):
             box = pdf_page.mediabox
             pages.append(
                 Page(
-                    source.stem,
+                    document_id,
                     number,
                     text,
                     metadata={
@@ -79,6 +82,7 @@ class PPTXParser(DocumentParser):
             ) from exc
         source = Path(path)
         _require_file(source)
+        document_id = stable_document_id(source)
         deck = Presentation(str(source))
         pages = []
         for number, slide in enumerate(deck.slides, 1):
@@ -114,7 +118,7 @@ class PPTXParser(DocumentParser):
             notes = _speaker_notes(slide)
             if notes:
                 metadata["speaker_notes"] = notes
-            pages.append(Page(source.stem, number, "\n".join(blocks), title, metadata))
+            pages.append(Page(document_id, number, "\n".join(blocks), title, metadata))
         return prepare_pages_for_retrieval(pages)
 
 

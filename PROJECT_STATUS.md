@@ -8,11 +8,11 @@
 - 课程测试数据：`D:\important files\Unimelb\S1`
 - GitHub：<https://github.com/Jevoncly/Slide2Study>
 - 当前分支：`agent/document-parsing`
-- 当前基线提交：`6f30e68 Add project migration handoff`
+- 上一阶段提交：`7bde05e Add reproducible retrieval evaluation reports`
 - 远程跟踪分支：`origin/agent/document-parsing`
 - Draft PR：<https://github.com/Jevoncly/Slide2Study/pull/1>
 
-`6f30e68` 已推送到 GitHub；本阶段在此基线上补齐可复现评测报告能力。
+`7bde05e` 尚未推送；本阶段在此基线上推进真实多课程 pilot。
 
 ## 2. 项目目标
 
@@ -81,11 +81,24 @@ multimodal page retriever。
 
 主要代码：`src/slide2study/evaluation.py`、`src/slide2study/cli.py`。
 
+### 3.6 稳定文档标识与多文档 pilot
+
+- `document_id` 由完整文件内容的 SHA-256 前缀生成，文件改名不会改变 ID。
+- `ingest-corpus` 可将多份 PDF/PPTX/TXT 合并为统一检索语料。
+- 严格校验会核对 split、标注状态以及文档、页码、chunk 是否真实存在。
+- 本地私有 pilot 选取 COMP90007、COMP90049、COMP90054、COMP90087 各一份课件。
+- 当前有 28 条 `candidate` QA：train 15、dev 4、test 9；尚未计为人工测试集。
+- Passage-only BM25 全部候选题 pilot：Recall@5 0.9286、MRR 0.8244、nDCG@5 0.8384。
+- 仅候选 test split（9 条）：Recall@5 0.8889、MRR 0.8333、nDCG@5 0.8091；仍非正式测试结论。
+- 未命中集中在 KNN 逆距离权重公式和 KNN 优缺点，两者受到跨文档/相邻页面关键词干扰。
+
+课程语料、候选 QA 和报告位于被 Git 忽略的 `artifacts/`、`data/private/`，不会提交到公开仓库。
+
 ## 4. 验证证据
 
 ### 4.1 自动化测试
 
-- 当前测试：22/22 通过。
+- 当前测试：25/25 通过。
 - 测试覆盖：解析、质量诊断、三层 chunk、层级校验、BM25、评测指标、hard negatives、
   页面清单、PDF/PPTX 渲染流程、向量校验、视觉页面排序、评测集校验及分类型报告。
 
@@ -128,7 +141,7 @@ python -m unittest discover -s tests -v
 - 当前运行环境没有安装 SentenceTransformers、Torch 和 CLIP 权重；CLIP 适配器已经实现，
   检索数学与接口由确定性假编码器测试，但尚未用真实 CLIP 权重生成课件指标。
 - 当前机器没有 LibreOffice；PPTX 转换路径已由自动化测试覆盖，但只对 PDF 做过真实渲染。
-- 还没有正式人工标注的 QA train/dev/test，因此不能报告可靠的 Recall@K、MRR 消融结果。
+- 已有四门课 28 条机器辅助候选 QA，但尚未人工复核，不能作为正式测试集或可靠消融结论。
 - 尚未实现 Dense Text Retriever、Hybrid Retrieval、Reranker 训练和多模态对比学习。
 - 尚未实现带引用答案、笔记、闪卡、题库和 UI。
 - 视觉页数量较多；后续需要通过标注集校准视觉风险阈值，而不是只依赖启发式规则。

@@ -1,0 +1,51 @@
+# 评测集标注指南
+
+## 目标
+
+评测集用于比较 BM25、Dense、Hybrid 和视觉页面检索。课程原文件、页面图片和私有标注
+保留在 `data/private/` 或 `artifacts/`，不得提交到公开仓库。
+
+## 每条记录
+
+JSONL 每行一条问题，必须包含：
+
+- `id`：全数据集唯一标识。
+- `query`：不直接复制整段课件的自然问题。
+- `document_id`：由入库命令生成的 `doc-...` 内容哈希标识。
+- `relevant_pages`：人工确认能够回答问题的全部页面。
+- `relevant_chunk_ids`：对应的 page 或 passage chunk。
+- `question_type`：`text`、`formula`、`table_chart`、`visual_only` 或 `cross_page`。
+- `split`：`train`、`dev` 或 `test`。
+- `annotation_status`：机器辅助产生时为 `candidate`，人工复核后才改为 `verified`。
+
+可选的 `answer_hint` 只用于复核，不参与检索评分。
+
+## 人工复核步骤
+
+1. 打开原始页面，确认问题无需课件外信息即可回答。
+2. 检查所有相关页，补充跨页证据，删除仅关键词相似但不能回答问题的页。
+3. 检查相关 chunk 包含完整证据；公式、图表和图注不能被错误拆开。
+4. 确认题型；必须查看图片才能回答的问题标为 `visual_only`。
+5. 检查问题没有泄漏答案，也不是整句照抄原文。
+6. 将 `annotation_status` 从 `candidate` 改为 `verified`。
+
+## 数据划分
+
+- 同一近重复问题只能出现在一个 split。
+- test 只保留人工复核的 `verified` 样本。
+- 参数选择使用 dev，不根据 test 指标调参。
+- 每门课程最终目标为 30–50 条，五种题型均应覆盖。
+
+## 校验与评测
+
+```powershell
+slide2study validate-dataset data/private/eval.jsonl `
+  --corpus artifacts/course_chunks.jsonl --strict
+
+slide2study evaluate artifacts/course_chunks.jsonl data/private/eval.jsonl `
+  --split test --levels passage --top-k 5 --strict-dataset `
+  --output artifacts/bm25_report.json
+```
+
+结构校验通过只代表引用存在，不代表语义标注已经人工确认；只有 `verified` 数据才能用于正式
+test 报告。

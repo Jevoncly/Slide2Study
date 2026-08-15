@@ -51,6 +51,7 @@ class HierarchicalChunker:
                     level="section",
                     child_ids=page_ids,
                     metadata={
+                        "source_name": section_pages[0].metadata.get("source_name"),
                         "page_count": len(section_pages),
                         "retrievable_page_count": len(retrievable_pages),
                         "truncated": len(section_text) > self.max_section_chars,
@@ -97,7 +98,11 @@ class HierarchicalChunker:
                     section=section,
                     parent_id=page_id,
                     level="passage",
-                    metadata={"source_title": page.title, "window": offset},
+                    metadata={
+                        "source_name": page.metadata.get("source_name"),
+                        "source_title": page.title,
+                        "window": offset,
+                    },
                 )
             )
         return passages

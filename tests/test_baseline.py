@@ -1,12 +1,18 @@
 import importlib.util
+import io
+import json
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
 
 from slide2study.chunking import HierarchicalChunker, validate_chunk_hierarchy
+from slide2study.cli import main as cli_main
 from slide2study.evaluation import evaluate, validate_dataset
+from slide2study.identifiers import stable_document_id
 from slide2study.interfaces import MultimodalPageEncoder
+from slide2study.io import write_jsonl
 from slide2study.models import Chunk, Page, RenderedPage
 from slide2study.parsing import (
     PDFParser,
@@ -74,6 +80,16 @@ class BaselineTests(unittest.TestCase):
             [chunk.chunk_id for chunk in repeated],
         )
 
+    def test_document_id_is_content_based_and_rename_independent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            first = Path(directory) / "lecture.pdf"
+            second = Path(directory) / "renamed.pdf"
+            first.write_bytes(b"same document")
+            second.write_bytes(b"same document")
+            self.assertEqual(stable_document_id(first), stable_document_id(second))
+            second.write_bytes(b"changed document")
+            self.assertNotEqual(stable_document_id(first), stable_document_id(second))
+
     def test_hierarchy_validator_detects_missing_parent(self):
         orphan = Chunk("orphan", "doc", 1, 1, "text", parent_id="missing")
         self.assertIn("missing parent", validate_chunk_hierarchy([orphan])[0])
@@ -140,6 +156,77 @@ class BaselineTests(unittest.TestCase):
                     {"id": "q1", "query": "second", "relevant_pages": [2]},
                 ]
             )
+
+    def test_dataset_validation_checks_corpus_references(self):
+        document_id = self.chunks[0].document_id
+        summary = validate_dataset(
+            [
+                {
+                    "id": "q1",
+                    "query": "What is regularization?",
+                    "document_id": document_id,
+                    "relevant_pages": [2],
+                    "question_type": "text",
+                    "split": "test",
+                }
+            ],
+            require_question_types=True,
+            require_splits=True,
+            require_document_ids=True,
+            chunks=self.chunks,
+        )
+        self.assertEqual(summary.splits, {"test": 1})
+        self.assertEqual(summary.documents, {document_id: 1})
+        with self.assertRaisesRegex(ValueError, "relevant page"):
+            validate_dataset(
+                [
+                    {
+                        "id": "q2",
+                        "query": "Invalid page",
+                        "document_id": document_id,
+                        "relevant_pages": [999],
+                        "question_type": "text",
+                        "split": "test",
+                    }
+                ],
+                chunks=self.chunks,
+            )
+
+    def test_cli_validates_full_corpus_before_level_filtering(self):
+        page_chunk = next(chunk for chunk in self.chunks if chunk.level == "page")
+        example = {
+            "id": "q1",
+            "query": page_chunk.text,
+            "document_id": page_chunk.document_id,
+            "relevant_pages": [page_chunk.page_start],
+            "relevant_chunk_ids": [page_chunk.chunk_id],
+            "question_type": "text",
+            "split": "test",
+            "annotation_status": "verified",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            corpus = Path(directory) / "corpus.jsonl"
+            dataset = Path(directory) / "dataset.jsonl"
+            write_jsonl((chunk.to_dict() for chunk in self.chunks), corpus)
+            write_jsonl([example], dataset)
+            output = io.StringIO()
+            with redirect_stdout(output):
+                result = cli_main(
+                    [
+                        "evaluate",
+                        str(corpus),
+                        str(dataset),
+                        "--levels",
+                        "passage",
+                        "--split",
+                        "test",
+                        "--strict-dataset",
+                    ]
+                )
+        self.assertEqual(result, 0)
+        report = json.loads(output.getvalue())
+        self.assertEqual(report["experiment"]["split"], "test")
+        self.assertEqual(report["metrics"]["queries"], 1)
 
     def test_evaluation_tracks_no_results_types_and_document_scope(self):
         chunks = [
@@ -325,7 +412,7 @@ class BaselineTests(unittest.TestCase):
                 )
             self.assertEqual(len(pages), 1)
             self.assertEqual(pages[0].source_path, str(source.resolve()))
-            self.assertEqual(pages[0].document_id, "lecture")
+            self.assertEqual(pages[0].document_id, stable_document_id(source))
 
     @unittest.skipUnless(importlib.util.find_spec("pptx"), "python-pptx is not installed")
     def test_pptx_parser_extracts_title_and_table(self):
