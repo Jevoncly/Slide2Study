@@ -6,6 +6,7 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
+from slide2study.interfaces import PageRetriever
 from slide2study.models import Chunk
 from slide2study.retrieval import Retriever
 
@@ -312,7 +313,7 @@ def evaluate(retriever: Retriever, examples: list[dict], top_k: int = 5) -> Eval
 
 
 def evaluate_page_retrieval(
-    retriever: Any, examples: list[dict], top_k: int = 5
+    retriever: PageRetriever, examples: list[dict], top_k: int = 5
 ) -> EvaluationSummary:
     """Evaluate query-to-page retrieval with the same aggregate report schema."""
     if top_k < 1:
@@ -347,3 +348,51 @@ def evaluate_page_retrieval(
             )
         )
     return _summarize(query_metrics, include_types=True)
+
+
+def compare_page_retrievers(
+    retrievers: dict[str, PageRetriever], examples: list[dict], top_k: int = 10
+) -> list[dict]:
+    """Record per-query rankings for failure analysis across page retrievers."""
+    if top_k < 1:
+        raise ValueError("top_k must be at least 1")
+    comparisons = []
+    for example in examples:
+        document_id = example.get("document_id")
+        relevant_pages = {int(page) for page in example.get("relevant_pages", [])}
+        systems = {}
+        for name, retriever in retrievers.items():
+            results = retriever.search(example["query"], top_k)
+            first_relevant_rank = next(
+                (
+                    result.rank
+                    for result in results
+                    if result.page.document_id == document_id
+                    and result.page.page_number in relevant_pages
+                ),
+                None,
+            )
+            systems[name] = {
+                "hit_at_k": first_relevant_rank is not None,
+                "first_relevant_rank": first_relevant_rank,
+                "top_pages": [
+                    {
+                        "document_id": result.page.document_id,
+                        "page_number": result.page.page_number,
+                        "rank": result.rank,
+                        "score": result.score,
+                    }
+                    for result in results
+                ],
+            }
+        comparisons.append(
+            {
+                "id": example.get("id"),
+                "query": example["query"],
+                "question_type": example.get("question_type"),
+                "document_id": document_id,
+                "relevant_pages": sorted(relevant_pages),
+                "systems": systems,
+            }
+        )
+    return comparisons

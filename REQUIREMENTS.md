@@ -97,7 +97,7 @@ Slide2Study 是一个面向算法工程师求职展示的多模态、结构感�
 - [ ] BM25 vs Dense
 - [ ] Dense vs Hybrid
 - [ ] 有无 Reranker
-- [ ] 纯文本 vs 页面视觉检索
+- [x] 纯文本 vs 页面视觉检索
 
 ## P2：Dense Retrieval 与 Reranker
 
@@ -121,8 +121,8 @@ Slide2Study 是一个面向算法工程师求职展示的多模态、结构感�
 
 - [ ] 融合 BM25 与 Dense 排名
 - [ ] 支持加权分数融合
-- [ ] 支持 Reciprocal Rank Fusion
-- [ ] 在验证集上选择融合参数
+- [x] 支持 Reciprocal Rank Fusion（BM25 + Visual baseline）
+- [x] 在验证集上固定融合参数
 - [ ] 对比 BM25、Dense、Hybrid 指标
 
 验收标准：Hybrid 在测试集 Recall@K 或 MRR 上稳定超过单一检索器。
@@ -168,8 +168,8 @@ Slide2Study 是一个面向算法工程师求职展示的多模态、结构感�
 - [ ] 使用对比学习训练
 - [ ] 加入图表和公式 hard negatives
 - [ ] 比较冻结视觉编码器与部分微调
-- [ ] 比较文本检索和视觉页面检索
-- [ ] 研究文本与视觉分数融合
+- [x] 比较文本检索和视觉页面检索
+- [x] 研究文本与视觉排名融合
 
 重点问题类型：
 
@@ -262,5 +262,5 @@ Slide2Study 是一个面向算法工程师求职展示的多模态、结构感�
 8. 实现带引用生成
 9. 完成 UI、实验报告和项目展示
 
-当前下一项：人工复核并扩充 3–5 门课程 QA，记录 BM25/CLIP 失败案例，再实现 Dense Text 与
-BM25 + Dense/Visual Hybrid Retrieval。
+当前下一项：人工复核并扩充 3–5 门课程 QA，扩大 dev/test 后验证题型感知融合，再实现
+Dense Text 与 BM25 + Dense/Visual Hybrid Retrieval。

@@ -9,10 +9,12 @@ from pathlib import Path
 from slide2study.chunking import CHUNK_LEVELS, HierarchicalChunker
 from slide2study.evaluation import (
     DATASET_SPLITS,
+    compare_page_retrievers,
     evaluate,
     evaluate_page_retrieval,
     validate_dataset,
 )
+from slide2study.fusion import BM25PageRetriever, ReciprocalRankFusionRetriever
 from slide2study.io import load_chunks, read_jsonl, write_jsonl
 from slide2study.parsing import build_parse_report, get_parser
 from slide2study.retrieval import BM25Retriever
@@ -135,6 +137,26 @@ def build_parser() -> argparse.ArgumentParser:
     visual_evaluation.add_argument("--top-k", type=int, default=5)
     visual_evaluation.add_argument("--split", choices=sorted(DATASET_SPLITS))
     visual_evaluation.add_argument("--output", type=Path)
+
+    hybrid_evaluation = commands.add_parser(
+        "hybrid-evaluate", help="Compare BM25, cached CLIP and reciprocal-rank fusion"
+    )
+    hybrid_evaluation.add_argument("corpus", type=Path)
+    hybrid_evaluation.add_argument("dataset", type=Path)
+    hybrid_evaluation.add_argument("--manifests", nargs="+", type=Path, required=True)
+    hybrid_evaluation.add_argument("--cache", type=Path, required=True)
+    hybrid_evaluation.add_argument("--model")
+    hybrid_evaluation.add_argument("--device")
+    hybrid_evaluation.add_argument("--batch-size", type=int, default=16)
+    hybrid_evaluation.add_argument("--levels", type=_parse_levels, default={"passage"})
+    hybrid_evaluation.add_argument("--top-k", type=int, default=5)
+    hybrid_evaluation.add_argument("--candidate-k", type=int, default=50)
+    hybrid_evaluation.add_argument("--diagnostic-k", type=int, default=10)
+    hybrid_evaluation.add_argument("--rrf-k", type=int, default=60)
+    hybrid_evaluation.add_argument("--bm25-weight", type=float, default=1.0)
+    hybrid_evaluation.add_argument("--visual-weight", type=float, default=1.0)
+    hybrid_evaluation.add_argument("--split", choices=sorted(DATASET_SPLITS))
+    hybrid_evaluation.add_argument("--output", type=Path)
 
     search = commands.add_parser("search", help="Search a chunk corpus with BM25")
     search.add_argument("corpus", type=Path)
@@ -280,6 +302,79 @@ def main(argv: list[str] | None = None) -> int:
             "metrics": evaluate_page_retrieval(
                 retriever, evaluation_examples, args.top_k
             ).to_dict(),
+        }
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(
+                json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+            report["output"] = str(args.output)
+        _print_json(report, indent=2)
+        return 0
+    if args.command == "hybrid-evaluate":
+        rendered_pages = _load_rendered_pages(args.manifests)
+        embeddings, cached_model = load_page_embedding_cache(
+            rendered_pages, args.cache, args.model
+        )
+        model_name = args.model or cached_model
+        encoder = SentenceTransformersCLIPEncoder(model_name, args.device, args.batch_size)
+        visual_retriever = VisualPageRetriever(rendered_pages, encoder, embeddings)
+        corpus_chunks = load_chunks(args.corpus)
+        bm25_chunks = [chunk for chunk in corpus_chunks if chunk.level in args.levels]
+        bm25_retriever = BM25PageRetriever(bm25_chunks, rendered_pages, args.candidate_k)
+        hybrid_retriever = ReciprocalRankFusionRetriever(
+            {"bm25": bm25_retriever, "clip": visual_retriever},
+            {"bm25": args.bm25_weight, "clip": args.visual_weight},
+            args.rrf_k,
+            args.candidate_k,
+        )
+        examples = list(read_jsonl(args.dataset))
+        validation = validate_dataset(
+            examples,
+            require_question_types=True,
+            require_splits=True,
+            require_document_ids=True,
+            require_annotation_statuses=True,
+            chunks=corpus_chunks,
+        )
+        evaluation_examples = (
+            [example for example in examples if example.get("split") == args.split]
+            if args.split
+            else examples
+        )
+        if not evaluation_examples:
+            raise ValueError(f"The dataset has no examples in split {args.split!r}")
+        retrievers = {
+            "bm25_page": bm25_retriever,
+            "clip_page": visual_retriever,
+            "hybrid_rrf": hybrid_retriever,
+        }
+        report = {
+            "experiment": {
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "retriever": "bm25-clip-rrf",
+                "model": model_name,
+                "top_k": args.top_k,
+                "candidate_k": args.candidate_k,
+                "diagnostic_k": args.diagnostic_k,
+                "rrf_k": args.rrf_k,
+                "weights": {"bm25": args.bm25_weight, "clip": args.visual_weight},
+                "levels": sorted(args.levels),
+                "split": args.split or "all",
+                "evaluated_queries": len(evaluation_examples),
+                "corpus": str(args.corpus.resolve()),
+                "manifests": [str(path.resolve()) for path in _expand_paths(args.manifests)],
+                "cache": str(args.cache.resolve()),
+                "dataset": str(args.dataset.resolve()),
+            },
+            "dataset": validation.to_dict(),
+            "metrics": {
+                name: evaluate_page_retrieval(retriever, evaluation_examples, args.top_k).to_dict()
+                for name, retriever in retrievers.items()
+            },
+            "query_diagnostics": compare_page_retrievers(
+                retrievers, evaluation_examples, args.diagnostic_k
+            ),
         }
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)

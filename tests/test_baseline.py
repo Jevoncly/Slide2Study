@@ -9,7 +9,13 @@ from unittest.mock import patch
 
 from slide2study.chunking import HierarchicalChunker, validate_chunk_hierarchy
 from slide2study.cli import main as cli_main
-from slide2study.evaluation import evaluate, evaluate_page_retrieval, validate_dataset
+from slide2study.evaluation import (
+    compare_page_retrievers,
+    evaluate,
+    evaluate_page_retrieval,
+    validate_dataset,
+)
+from slide2study.fusion import BM25PageRetriever, ReciprocalRankFusionRetriever
 from slide2study.identifiers import stable_document_id
 from slide2study.interfaces import MultimodalPageEncoder
 from slide2study.io import write_jsonl
@@ -370,6 +376,40 @@ class BaselineTests(unittest.TestCase):
         self.assertEqual(summary.recall_at_k, 1.0)
         self.assertEqual(summary.mrr, 1.0)
 
+    def test_bm25_clip_rrf_fuses_page_rankings_and_records_diagnostics(self):
+        pages = [
+            RenderedPage("deck", 1, "page-1.png", "deck.pdf", 100, 80, "a"),
+            RenderedPage("deck", 2, "page-2.png", "deck.pdf", 100, 80, "b"),
+        ]
+        chunks = [
+            Chunk("chunk-1", "deck", 1, 1, "gradient descent", level="passage"),
+            Chunk("chunk-2", "deck", 2, 2, "decision boundary", level="passage"),
+        ]
+        bm25 = BM25PageRetriever(chunks, pages)
+        clip = VisualPageRetriever(pages, FakeMultimodalEncoder())
+        hybrid = ReciprocalRankFusionRetriever(
+            {"bm25": bm25, "clip": clip},
+            {"bm25": 1.0, "clip": 3.0},
+            rrf_k=0,
+        )
+        self.assertEqual(bm25.search("gradient descent", 1)[0].page.page_number, 1)
+        self.assertEqual(hybrid.search("gradient descent", 1)[0].page.page_number, 2)
+        diagnostics = compare_page_retrievers(
+            {"bm25": bm25, "hybrid": hybrid},
+            [
+                {
+                    "id": "q1",
+                    "query": "gradient descent",
+                    "document_id": "deck",
+                    "relevant_pages": [1],
+                    "question_type": "text",
+                }
+            ],
+            top_k=2,
+        )
+        self.assertEqual(diagnostics[0]["systems"]["bm25"]["first_relevant_rank"], 1)
+        self.assertEqual(diagnostics[0]["systems"]["hybrid"]["first_relevant_rank"], 2)
+
     def test_page_embedding_cache_checks_model_and_image_hash(self):
         page = RenderedPage("deck", 1, "page.png", "deck.pdf", 100, 80, "abc")
         with tempfile.TemporaryDirectory() as directory:
@@ -403,6 +443,7 @@ class BaselineTests(unittest.TestCase):
             dataset = root / "dataset.jsonl"
             cache = root / "embeddings.json"
             report_path = root / "report.json"
+            hybrid_report_path = root / "hybrid-report.json"
             page = RenderedPage(
                 page_chunk.document_id,
                 page_chunk.page_start,
@@ -453,9 +494,34 @@ class BaselineTests(unittest.TestCase):
                     ),
                     0,
                 )
+                self.assertEqual(
+                    cli_main(
+                        [
+                            "hybrid-evaluate",
+                            str(corpus),
+                            str(dataset),
+                            "--manifests",
+                            str(manifest),
+                            "--cache",
+                            str(cache),
+                            "--split",
+                            "test",
+                            "--top-k",
+                            "1",
+                            "--diagnostic-k",
+                            "1",
+                            "--output",
+                            str(hybrid_report_path),
+                        ]
+                    ),
+                    0,
+                )
             report = json.loads(report_path.read_text(encoding="utf-8"))
+            hybrid_report = json.loads(hybrid_report_path.read_text(encoding="utf-8"))
         self.assertEqual(report["experiment"]["model"], "fake-clip")
         self.assertEqual(report["metrics"]["recall_at_k"], 1.0)
+        self.assertEqual(hybrid_report["metrics"]["hybrid_rrf"]["recall_at_k"], 1.0)
+        self.assertEqual(len(hybrid_report["query_diagnostics"]), 1)
 
     def test_page_manifest_round_trip(self):
         page = RenderedPage(
