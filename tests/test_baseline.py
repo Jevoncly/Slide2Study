@@ -5,7 +5,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from slide2study.chunking import HierarchicalChunker, validate_chunk_hierarchy
-from slide2study.evaluation import evaluate
+from slide2study.evaluation import evaluate, validate_dataset
 from slide2study.interfaces import MultimodalPageEncoder
 from slide2study.models import Chunk, Page, RenderedPage
 from slide2study.parsing import (
@@ -115,6 +115,55 @@ class BaselineTests(unittest.TestCase):
         summary = evaluate(BM25Retriever(self.chunks), examples, top_k=3)
         self.assertEqual(summary.recall_at_k, 1.0)
         self.assertEqual(summary.mrr, 1.0)
+        self.assertGreater(summary.precision_at_k, 0.0)
+        self.assertEqual(summary.no_result_rate, 0.0)
+        self.assertLessEqual(summary.ndcg_at_k, 1.0)
+        self.assertIn("unlabeled", summary.by_question_type)
+
+    def test_dataset_validation_reports_types_and_rejects_duplicates(self):
+        summary = validate_dataset(
+            [
+                {
+                    "id": "q1",
+                    "query": "What is regularization?",
+                    "relevant_pages": [2],
+                    "question_type": "text",
+                }
+            ],
+            require_question_types=True,
+        )
+        self.assertEqual(summary.question_types, {"text": 1})
+        with self.assertRaisesRegex(ValueError, "duplicate id"):
+            validate_dataset(
+                [
+                    {"id": "q1", "query": "first", "relevant_pages": [1]},
+                    {"id": "q1", "query": "second", "relevant_pages": [2]},
+                ]
+            )
+
+    def test_evaluation_tracks_no_results_types_and_document_scope(self):
+        chunks = [
+            Chunk("a", "document-a", 1, 1, "shared keyword"),
+            Chunk("b", "document-b", 2, 2, "another topic"),
+        ]
+        examples = [
+            {
+                "query": "shared keyword",
+                "document_id": "document-b",
+                "relevant_pages": [1],
+                "question_type": "text",
+            },
+            {
+                "query": "missing phrase",
+                "relevant_pages": [9],
+                "question_type": "visual_only",
+            },
+        ]
+        summary = evaluate(BM25Retriever(chunks), examples, top_k=1)
+        self.assertEqual(summary.recall_at_k, 0.0)
+        self.assertEqual(summary.no_result_rate, 0.5)
+        self.assertEqual(summary.by_question_type["visual_only"]["no_result_rate"], 1.0)
+        self.assertGreaterEqual(summary.p95_latency_ms, 0.0)
 
     def test_hard_negative_mining_excludes_positive(self):
         retriever = BM25Retriever(self.chunks)

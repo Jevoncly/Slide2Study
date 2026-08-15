@@ -8,12 +8,11 @@
 - 课程测试数据：`D:\important files\Unimelb\S1`
 - GitHub：<https://github.com/Jevoncly/Slide2Study>
 - 当前分支：`agent/document-parsing`
-- 当前提交：`3e71ae9 Add visual page retrieval baseline`
+- 当前基线提交：`6f30e68 Add project migration handoff`
 - 远程跟踪分支：`origin/agent/document-parsing`
 - Draft PR：<https://github.com/Jevoncly/Slide2Study/pull/1>
 
-`3e71ae9` 已推送到 GitHub。生成本文档后，`PROJECT_STATUS.md` 以及同步修正的
-`REQUIREMENTS.md` 复选框尚未提交。
+`6f30e68` 已推送到 GitHub；本阶段在此基线上补齐可复现评测报告能力。
 
 ## 2. 项目目标
 
@@ -73,13 +72,22 @@ multimodal page retriever。
 主要代码：`src/slide2study/vision.py`、`src/slide2study/interfaces.py`、
 `src/slide2study/cli.py`。
 
+### 3.5 评测数据校验与报告
+
+- `validate-dataset` 检查 ID、问题、相关页/chunk、文档 ID 和五类问题标签。
+- `evaluate` 输出 Recall@K、Precision@K、MRR、nDCG@K 和无结果率。
+- 统计平均与 P95 检索延迟，并按问题类型拆分指标。
+- `--output` 将检索器、Top-K、chunk 层级、语料/数据集路径和指标保存为 JSON。
+
+主要代码：`src/slide2study/evaluation.py`、`src/slide2study/cli.py`。
+
 ## 4. 验证证据
 
 ### 4.1 自动化测试
 
-- 当前测试：20/20 通过。
+- 当前测试：22/22 通过。
 - 测试覆盖：解析、质量诊断、三层 chunk、层级校验、BM25、评测指标、hard negatives、
-  页面清单、PDF/PPTX 渲染流程、向量校验及视觉页面排序。
+  页面清单、PDF/PPTX 渲染流程、向量校验、视觉页面排序、评测集校验及分类型报告。
 
 运行：
 

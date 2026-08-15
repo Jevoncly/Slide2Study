@@ -3,10 +3,11 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 from slide2study.chunking import CHUNK_LEVELS, HierarchicalChunker
-from slide2study.evaluation import evaluate
+from slide2study.evaluation import evaluate, validate_dataset
 from slide2study.io import load_chunks, read_jsonl, write_jsonl
 from slide2study.parsing import build_parse_report, get_parser
 from slide2study.retrieval import BM25Retriever
@@ -85,6 +86,22 @@ def build_parser() -> argparse.ArgumentParser:
     evaluation.add_argument("dataset", type=Path)
     evaluation.add_argument("--top-k", type=int, default=5)
     evaluation.add_argument("--levels", type=_parse_levels, default=set(CHUNK_LEVELS))
+    evaluation.add_argument("--output", type=Path, help="Save config and metrics as JSON")
+    evaluation.add_argument(
+        "--strict-dataset",
+        action="store_true",
+        help="Require every example to have a supported question_type",
+    )
+
+    validation = commands.add_parser(
+        "validate-dataset", help="Validate a retrieval evaluation JSONL file"
+    )
+    validation.add_argument("dataset", type=Path)
+    validation.add_argument(
+        "--strict",
+        action="store_true",
+        help="Require every example to have a supported question_type",
+    )
 
     mining = commands.add_parser("mine-negatives", help="Mine BM25 hard negatives for training")
     mining.add_argument("corpus", type=Path)
@@ -139,6 +156,12 @@ def main(argv: list[str] | None = None) -> int:
             report["pages_output"] = str(args.pages_output)
         _print_json(report, indent=2)
         return 0
+    if args.command == "validate-dataset":
+        examples = list(read_jsonl(args.dataset))
+        _print_json(
+            validate_dataset(examples, require_question_types=args.strict).to_dict(), indent=2
+        )
+        return 0
     if args.command == "ingest":
         pages = get_parser(args.document).parse(args.document)
         chunks = HierarchicalChunker(args.max_chars, args.overlap).chunk(pages)
@@ -164,7 +187,26 @@ def main(argv: list[str] | None = None) -> int:
         write_jsonl((triplet.to_dict() for triplet in triplets), args.output)
         _print_json({"triplets": len(triplets), "output": str(args.output)})
         return 0
-    _print_json(evaluate(retriever, examples, args.top_k).to_dict(), indent=2)
+    validation = validate_dataset(examples, require_question_types=args.strict_dataset)
+    report = {
+        "experiment": {
+            "generated_at": datetime.now(timezone.utc).isoformat(),
+            "retriever": "bm25",
+            "top_k": args.top_k,
+            "levels": sorted(args.levels),
+            "corpus": str(args.corpus.resolve()),
+            "dataset": str(args.dataset.resolve()),
+        },
+        "dataset": validation.to_dict(),
+        "metrics": evaluate(retriever, examples, args.top_k).to_dict(),
+    }
+    if args.output:
+        args.output.parent.mkdir(parents=True, exist_ok=True)
+        args.output.write_text(
+            json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+        )
+        report["output"] = str(args.output)
+    _print_json(report, indent=2)
     return 0
 
 

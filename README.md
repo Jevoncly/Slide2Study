@@ -26,7 +26,8 @@ slide2study ingest examples/sample_course.txt --output artifacts/sample_chunks.j
 slide2study inspect examples/sample_course.txt --pages-output artifacts/sample_pages.jsonl
 slide2study search artifacts/sample_chunks.jsonl "正则化为什么能降低模型复杂度" --top-k 3
 slide2study search artifacts/sample_chunks.jsonl "正则化" --levels page,passage
-slide2study evaluate artifacts/sample_chunks.jsonl examples/retrieval_eval.jsonl --top-k 3
+slide2study validate-dataset examples/retrieval_eval.jsonl --strict
+slide2study evaluate artifacts/sample_chunks.jsonl examples/retrieval_eval.jsonl --top-k 3 --strict-dataset --output artifacts/bm25_report.json
 slide2study mine-negatives artifacts/sample_chunks.jsonl examples/retrieval_eval.jsonl --output artifacts/train_triplets.jsonl
 ```
 
@@ -57,11 +58,17 @@ CLIP 时，SentenceTransformers 会下载指定模型；默认模型是 `clip-Vi
 
 ## 评测集格式
 
-每行一个查询，可标注相关页或相关 chunk：
+每行一个查询，可标注相关页或相关 chunk。正式评测集还应提供 `document_id` 和
+`question_type`；支持的题型为 `text`、`formula`、`table_chart`、`visual_only` 和
+`cross_page`：
 
 ```json
-{"id":"q1","query":"验证集的作用是什么？","relevant_pages":[3],"relevant_chunk_ids":[]}
+{"id":"q1","query":"验证集的作用是什么？","document_id":"lecture-01","relevant_pages":[3],"relevant_chunk_ids":[],"question_type":"text"}
 ```
+
+`validate-dataset --strict` 会在实验前检查重复 ID、空问题、非法页码、缺失标注和题型。
+`evaluate --output` 会保存实验配置、数据集概况、Recall@K、Precision@K、MRR、nDCG@K、
+无结果率、平均/P95 延迟，以及按题型拆分的指标。
 
 ## 代码结构
 
@@ -70,7 +77,7 @@ src/slide2study/
   parsing.py       # PDF/PPTX/TXT 页面解析与质量诊断
   chunking.py      # 跨页章节识别与 section/page/passage 三级切块
   retrieval.py     # BM25 baseline 与 Dense 接口
-  evaluation.py    # Recall@K / MRR / nDCG@K
+  evaluation.py    # 数据校验、检索指标、分类型与延迟报告
   interfaces.py    # Reranker / 多模态编码 / 引用生成接口
   vision.py        # PDF/PPTX 页面渲染、CLIP 编码和视觉页面检索
   training.py      # BM25/Dense hard-negative mining
