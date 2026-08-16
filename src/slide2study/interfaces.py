@@ -2,8 +2,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from typing import Protocol
 
-from slide2study.models import SearchResult
+from slide2study.models import PageSearchResult, SearchResult
 
 
 @dataclass(slots=True)
@@ -31,6 +32,20 @@ class MultimodalPageEncoder(ABC):
     @abstractmethod
     def encode_queries(self, queries: list[str]) -> list[list[float]]:
         pass
+
+
+class PageRetriever(Protocol):
+    """Common query-to-page interface used by visual and fused retrieval."""
+
+    def search(self, query: str, top_k: int = 5) -> list[PageSearchResult]: ...
+
+
+class TextEncoder(Protocol):
+    """Batch encoder for asymmetric query-to-passage retrieval."""
+
+    def encode_documents(self, texts: list[str]) -> list[list[float]]: ...
+
+    def encode_queries(self, queries: list[str]) -> list[list[float]]: ...
 
 
 class Reranker(ABC):

@@ -8,3 +8,4 @@ build/
 *.egg-info/
 artifacts/
 data/raw/
+data/private/
