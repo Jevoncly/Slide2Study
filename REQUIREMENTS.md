@@ -262,6 +262,6 @@ Slide2Study 是一个面向算法工程师求职展示的多模态、结构感�
 8. 实现带引用生成
 9. 完成 UI、实验报告和项目展示
 
-当前下一项：可配置 OpenAI Responses API 后端及引用/拒答评测命令已实现，但尚未使用真实
-API key 运行付费模型。下一步先把冻结的题型路由接到生成证据，而不是继续依赖 BM25；随后在
-小规模人工集上运行 LLM，评估 faithfulness、答案完整性、延迟和成本。
+当前方向：不接入外部生成 API，优先优化完全离线模式。`answer` 和 `generation-evaluate` 已
+支持复用本地 Dense 缓存；下一步改进多证据答案组合、离线章节摘要和闪卡，并为 exact-extractive
+faithfulness、答案完整性及端到端延迟建立评测。

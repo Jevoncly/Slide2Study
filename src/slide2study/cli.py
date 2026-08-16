@@ -28,7 +28,7 @@ from slide2study.fusion import (
     ReciprocalRankFusionChunkRetriever,
     ReciprocalRankFusionRetriever,
 )
-from slide2study.generation import GroundedAnswerGenerator, OpenAIAnswerBackend
+from slide2study.generation import GroundedAnswerGenerator
 from slide2study.generation_evaluation import evaluate_generation
 from slide2study.io import load_chunks, read_jsonl, write_jsonl
 from slide2study.negative_review import apply_negative_reviews, build_negative_review_pack
@@ -285,9 +285,11 @@ def build_parser() -> argparse.ArgumentParser:
     answer.add_argument("query")
     answer.add_argument("--top-k", type=int, default=5)
     answer.add_argument("--levels", type=_parse_levels, default={"passage"})
-    answer.add_argument("--backend", choices=("extractive", "openai"), default="extractive")
-    answer.add_argument("--model", default="gpt-5-mini")
-    answer.add_argument("--max-output-tokens", type=int, default=500)
+    answer.add_argument("--retriever", choices=("bm25", "dense"), default="bm25")
+    answer.add_argument("--dense-cache", type=Path)
+    answer.add_argument("--dense-model")
+    answer.add_argument("--device")
+    answer.add_argument("--dense-batch-size", type=int, default=32)
     answer.add_argument("--output", type=Path)
 
     generation_evaluation = commands.add_parser(
@@ -296,10 +298,12 @@ def build_parser() -> argparse.ArgumentParser:
     generation_evaluation.add_argument("corpus", type=Path)
     generation_evaluation.add_argument("dataset", type=Path)
     generation_evaluation.add_argument(
-        "--backend", choices=("extractive", "openai"), default="extractive"
+        "--retriever", choices=("bm25", "dense"), default="bm25"
     )
-    generation_evaluation.add_argument("--model", default="gpt-5-mini")
-    generation_evaluation.add_argument("--max-output-tokens", type=int, default=500)
+    generation_evaluation.add_argument("--dense-cache", type=Path)
+    generation_evaluation.add_argument("--dense-model")
+    generation_evaluation.add_argument("--device")
+    generation_evaluation.add_argument("--dense-batch-size", type=int, default=32)
     generation_evaluation.add_argument("--top-k", type=int, default=5)
     generation_evaluation.add_argument("--levels", type=_parse_levels, default={"passage"})
     generation_evaluation.add_argument("--output", type=Path)
@@ -1165,25 +1169,38 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     corpus_chunks = load_chunks(args.corpus)
     chunks = [chunk for chunk in corpus_chunks if chunk.level in args.levels]
-    retriever = BM25Retriever(chunks)
+    retriever_name = "bm25"
+    retriever_model = None
+    if args.command in {"answer", "generation-evaluate"} and args.retriever == "dense":
+        if not args.dense_cache:
+            raise ValueError("--dense-cache is required when --retriever dense")
+        embeddings, cache_metadata = load_chunk_embedding_cache(
+            chunks, args.dense_cache, args.dense_model
+        )
+        retriever_model = args.dense_model or cache_metadata["model"]
+        encoder = SentenceTransformersTextEncoder(
+            retriever_model,
+            args.device,
+            args.dense_batch_size,
+            cache_metadata["query_prefix"],
+            cache_metadata["document_prefix"],
+        )
+        retriever = DenseRetriever(chunks, encoder, embeddings)
+        retriever_name = "dense"
+    else:
+        retriever = BM25Retriever(chunks)
     if args.command == "search":
         results = retriever.search(args.query, args.top_k)
         _print_json([result.to_dict() for result in results], indent=2)
         return 0
     if args.command == "answer":
         evidence = retriever.search(args.query, args.top_k)
-        backend = (
-            OpenAIAnswerBackend(args.model, max_output_tokens=args.max_output_tokens)
-            if args.backend == "openai"
-            else None
-        )
-        material = GroundedAnswerGenerator(backend).generate(args.query, evidence)
+        material = GroundedAnswerGenerator().generate(args.query, evidence)
         report = {
             **material.to_dict(),
             "query": args.query,
-            "retriever": "bm25",
-            "backend": args.backend,
-            "model": args.model if args.backend == "openai" else None,
+            "retriever": retriever_name,
+            "retriever_model": retriever_model,
             "retrieved_chunk_ids": [result.chunk.chunk_id for result in evidence],
         }
         if args.output:
@@ -1195,13 +1212,8 @@ def main(argv: list[str] | None = None) -> int:
         _print_json(report, indent=2)
         return 0
     if args.command == "generation-evaluate":
-        backend = (
-            OpenAIAnswerBackend(args.model, max_output_tokens=args.max_output_tokens)
-            if args.backend == "openai"
-            else None
-        )
         metrics, diagnostics = evaluate_generation(
-            GroundedAnswerGenerator(backend),
+            GroundedAnswerGenerator(),
             retriever,
             list(read_jsonl(args.dataset)),
             args.top_k,
@@ -1209,9 +1221,8 @@ def main(argv: list[str] | None = None) -> int:
         report = {
             "experiment": {
                 "generated_at": datetime.now(timezone.utc).isoformat(),
-                "retriever": "bm25",
-                "backend": args.backend,
-                "model": args.model if args.backend == "openai" else None,
+                "retriever": retriever_name,
+                "retriever_model": retriever_model,
                 "top_k": args.top_k,
                 "dataset": str(args.dataset.resolve()),
             },
