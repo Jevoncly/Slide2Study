@@ -131,15 +131,15 @@ Slide2Study 是一个面向算法工程师求职展示的多模态、结构感�
 
 - [x] BM25 hard-negative 基础接口
 - [x] Dense hard-negative mining
-- [ ] 去除误标为负样本的相关页面
+- [x] 去除误标为负样本的相关页面
 - [x] 控制简单、中等、困难负样本比例
 - [x] 输出训练 triplet/pair 数据
 - [x] 记录 negative 来源和原始排名
 
 ### 11. Reranker 微调
 
-- [ ] 建立 cross-encoder reranker
-- [ ] 使用 query-positive-negative 数据训练
+- [x] 建立 cross-encoder reranker
+- [x] 使用 query-positive-negative 数据训练
 - [ ] 支持 checkpoint 保存和恢复
 - [ ] 支持验证集 early stopping
 - [ ] 输出训练曲线

@@ -236,8 +236,44 @@ def _render_pdf(
     executable: str | Path | None,
     page_metadata: dict[int, dict[str, object]],
 ) -> list[RenderedPage]:
-    pdftoppm = _resolve_executable(executable, "pdftoppm")
     target_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        return _render_pdf_with_poppler(
+            pdf_path,
+            target_dir,
+            source_path,
+            document_id,
+            dpi,
+            executable,
+            page_metadata,
+        )
+    except RuntimeError as poppler_error:
+        try:
+            return _render_pdf_with_pymupdf(
+                pdf_path,
+                target_dir,
+                source_path,
+                document_id,
+                dpi,
+                page_metadata,
+            )
+        except RuntimeError as pymupdf_error:
+            raise RuntimeError(
+                "PDF rendering failed with both Poppler and PyMuPDF. "
+                f"Poppler: {poppler_error} PyMuPDF: {pymupdf_error}"
+            ) from pymupdf_error
+
+
+def _render_pdf_with_poppler(
+    pdf_path: Path,
+    target_dir: Path,
+    source_path: Path,
+    document_id: str,
+    dpi: int,
+    executable: str | Path | None,
+    page_metadata: dict[int, dict[str, object]],
+) -> list[RenderedPage]:
+    pdftoppm = _resolve_executable(executable, "pdftoppm")
     with tempfile.TemporaryDirectory(prefix="slide2study-render-") as directory:
         prefix = Path(directory) / "rendered"
         _run([str(pdftoppm), "-png", "-r", str(dpi), str(pdf_path), str(prefix)])
@@ -250,23 +286,84 @@ def _render_pdf(
         for page_number, temporary in enumerate(rendered, 1):
             destination = target_dir / f"page-{page_number:04d}.png"
             shutil.copy2(temporary, destination)
-            width, height = _image_size(destination)
-            metadata = page_metadata.get(page_number, {})
             pages.append(
-                RenderedPage(
-                    document_id=document_id,
-                    page_number=page_number,
-                    image_path=str(destination),
-                    source_path=str(source_path),
-                    width=width,
-                    height=height,
-                    sha256=_sha256(destination),
-                    requires_vision=bool(metadata.get("requires_vision", False)),
-                    role=str(metadata.get("role", "content")),
-                    visual_risk_score=float(metadata.get("visual_risk_score", 0.0)),
+                _rendered_page(
+                    destination,
+                    source_path,
+                    document_id,
+                    page_number,
+                    page_metadata,
                 )
             )
     return pages
+
+
+def _render_pdf_with_pymupdf(
+    pdf_path: Path,
+    target_dir: Path,
+    source_path: Path,
+    document_id: str,
+    dpi: int,
+    page_metadata: dict[int, dict[str, object]],
+) -> list[RenderedPage]:
+    try:
+        import pymupdf
+    except ImportError as exc:
+        raise RuntimeError(
+            "PyMuPDF is not installed: pip install 'slide2study[documents]'"
+        ) from exc
+
+    document = None
+    try:
+        document = pymupdf.open(pdf_path)
+        if document.page_count < 1:
+            raise RuntimeError("PyMuPDF found no pages in the PDF")
+        scale = dpi / 72
+        matrix = pymupdf.Matrix(scale, scale)
+        pages = []
+        for page_number, page in enumerate(document, 1):
+            destination = target_dir / f"page-{page_number:04d}.png"
+            page.get_pixmap(matrix=matrix, alpha=False).save(destination)
+            pages.append(
+                _rendered_page(
+                    destination,
+                    source_path,
+                    document_id,
+                    page_number,
+                    page_metadata,
+                )
+            )
+        return pages
+    except RuntimeError:
+        raise
+    except Exception as exc:
+        raise RuntimeError(f"PyMuPDF command failed: {exc}") from exc
+    finally:
+        if document is not None:
+            document.close()
+
+
+def _rendered_page(
+    destination: Path,
+    source_path: Path,
+    document_id: str,
+    page_number: int,
+    page_metadata: dict[int, dict[str, object]],
+) -> RenderedPage:
+    width, height = _image_size(destination)
+    metadata = page_metadata.get(page_number, {})
+    return RenderedPage(
+        document_id=document_id,
+        page_number=page_number,
+        image_path=str(destination),
+        source_path=str(source_path),
+        width=width,
+        height=height,
+        sha256=_sha256(destination),
+        requires_vision=bool(metadata.get("requires_vision", False)),
+        role=str(metadata.get("role", "content")),
+        visual_risk_score=float(metadata.get("visual_risk_score", 0.0)),
+    )
 
 
 def _resolve_executable(explicit: str | Path | None, name: str) -> Path:

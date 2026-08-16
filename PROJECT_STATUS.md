@@ -61,7 +61,8 @@ multimodal page retriever。
 
 ### 3.4 页面视觉理解（需求 12）
 
-- PDF 通过 Poppler 渲染为稳定的 `page-0001.png`。
+- PDF 优先通过 Poppler 渲染；Poppler 不可用时自动回退到 PyMuPDF，均生成稳定的
+  `page-0001.png`。
 - PPTX 通过 LibreOffice 转换为 PDF 后复用渲染管线。
 - JSONL 清单记录文档、页码、图片绝对路径、尺寸、SHA-256、页面角色和视觉风险。
 - `MultimodalPageEncoder` 提供页面图像编码和文本问题编码接口。
@@ -168,11 +169,72 @@ multimodal page retriever。
   `65,535 bytes including header and payload` 的 passage。
 - 审阅包使用内容 SHA-256 指纹隔离浏览器本地进度，修正后的数据不会继承旧版审阅决定。
 
+### 3.14 复核结果清洗与训练集固化
+
+- 60 条平衡候选已全部复核：有效负例 50、假负例 10、不确定 0，15 个训练问题均至少保留
+  一条负例。
+- 假负例主要集中在 hard 档：hard 8/30、medium 1/15、easy 1/15，说明高排名候选更容易
+  包含能够部分回答问题的语义相关证据。
+- 清洗后训练集为 50 条：hard 22、medium 14、easy 14；假负例不会进入 Reranker 训练。
+- 新增 `apply-negative-reviews`：默认要求所有条目已完成复核，仅保留 `valid_negative`，并
+  输出规范的 query-positive-negative triplet；遇到 pending/uncertain 会拒绝生成。
+- 本地清洗结果位于 `artifacts/pilot_negative_review/reviewed-train-triplets.jsonl`，课程文本
+  与私有标注继续由 Git 忽略。
+
+### 3.15 Cross-encoder Reranker 训练链路
+
+- 新增 `train-reranker`，将已清洗 triplet 展开为去重的 query-text 二分类样本，支持模型、
+  device、batch size、epoch、学习率与随机种子配置，并保存可重新加载的 checkpoint。
+- 50 条已复核 triplet 生成 65 个去重训练 pair：正例 15、负例 50，覆盖全部 15 个训练问题。
+- 使用本机缓存的 `intfloat/multilingual-e5-small` 初始化 cross-encoder 分类头，在 CPU 上完成
+  1 epoch、9 step 的可复现训练，checkpoint 位于 `artifacts/pilot_reranker_e5`。
+- checkpoint 已成功重新加载。训练集 pairwise 烟雾测试为 29/50（58%），正负均值仅有轻微
+  分离；这说明训练链路可运行，但当前模型仍明显不足，不能作为泛化或模型改进结论。
+- 下一步必须在独立 dev 候选集上比较 Dense 与 Dense+Reranker，并据此加入 early stopping、
+  checkpoint 恢复和训练曲线；不得根据 test 调整训练参数。
+- 新增 `reranker-evaluate`，从 Dense Top-N 候选中用 cross-encoder 重排，并复用统一的检索
+  指标与分题型报告。
+- 当前 1-epoch 模型在候选 dev（4 条）上明显失败：Recall@5 0.25、MRR 0.0833、nDCG@5
+  0.125；同一 dev 的 Dense 基线三项均为 1.0。该模型不得用于 test 或设为默认检索器。
+- 失败原因与训练诊断一致：仅 65 个 pair、随机初始化分类头且只有 9 个更新 step。后续应优先
+  扩充并人工确认 dev/训练数据，或引入已有检索预训练的 cross-encoder，再实施 early stopping；
+  不能围绕 4 条 candidate dev 反复调参。
+
+### 3.16 公开课件—复习资料对应组
+
+- `data/public_course_pairs.json` 记录 3 个公开来源、4 个主题对应组、原始 URL、角色和许可边界。
+- MIT 6.006 动态规划：3 份讲义对应 recitation、problem session、problem set 及答案。
+- Berkeley CS188：Search 与 MDP 讲义分别对应 discussion、exam prep 及答案；因未找到明确的
+  逐文件再分发许可，原文件仅限本地研究。
+- OpenDSA Sorting Part 1：同一 RST 模块同时进入演示幻灯片和带注释讲义配置，并对应 3 个
+  排序练习与可视化源文件；仓库使用 MIT License。
+- 下载脚本校验 PDF 文件头，并记录 URL、内容类型、字节数和 SHA-256。当前下载 22/22 成功，
+  共 18,658,921 字节（17.79 MiB），缺失 0、大小不一致 0。
+- 现有 `ingest-corpus` 已实测导入全部 22 份 PDF：328 页、935 个 chunk、失败 0。
+- 原始文件、OpenDSA 稀疏源码和解析产物位于被 Git 忽略的 `data/raw/`、`artifacts/`；公开
+  仓库只保留清单、下载脚本和许可说明。
+- 已建立 30 条公开检索候选：MIT DP、Berkeley Search、Berkeley MDP 各 10 条；train/dev/test
+  为 18/6/6。AI 语义复核后 text/formula/cross-page/visual-only 为 17/9/3/1，严格数据校验
+  通过且均保留 `candidate` 状态。
+- 评测语料已收紧为 7 份纯课件、256 页、566 个层级 chunk（253 个 passage）；复习资料只用作
+  问题来源，不参与检索，避免 discussion 或答案文件泄漏。
+- 纯课件候选 dev：BM25 Recall@5/MRR/nDCG@5 为 1.000/0.622/0.712，Dense 为
+  0.833/0.597/0.655，BM25+Dense RRF 为 0.833/0.597/0.655。
+- AI 修正标注后重跑纯课件候选 test：BM25 为 1.000/0.514/0.597，Dense 为
+  1.000/0.917/0.925，RRF 为 1.000/0.833/0.887。样本尚未人工确认，不得作为正式模型结论，
+  也不得根据 test 调权重。
+- 两个本机 Poppler 入口仍不可用；新增并实测 PyMuPDF 回退路径，7/7 份课件共 256 页均成功
+  渲染，页面清单的 SHA-256 校验有效。
+- 审阅包包含 30 条记录和 33 个证据页图片，缺失 0；33/33 个证据页均已逐页检查，未发现
+  裁切、模糊或页面错配。当前仍保留 `candidate`，等待人工确认语义标注后再转为 `verified`。
+- AI 语义复核结果为 23 条无需修改、7 条修正后通过、0 条拒绝；完整理由保存在
+  `data/public_course_eval_ai_review.jsonl`。修正项已同步到生成脚本，重建数据不会回退。
+
 ## 4. 验证证据
 
 ### 4.1 自动化测试
 
-- 当前测试：37/37 通过；Ruff 检查通过。
+- 当前测试：42/42 通过；Ruff 检查通过。
 - 测试覆盖：解析、质量诊断、三层 chunk、层级校验、BM25、评测指标、hard negatives、
   页面清单、PDF/PPTX 渲染流程、向量缓存及哈希校验、视觉页面排序、页面级评测、
   BM25 页面映射、页面/chunk 加权 RRF、逐题诊断、Dense 排序、chunk 缓存及文本哈希校验、
@@ -236,7 +298,7 @@ python -m pip install -e ".[documents,vision,dev]"
 
 系统依赖：
 
-- PDF 页面渲染：Poppler / `pdftoppm`
+- PDF 页面渲染：优先 Poppler / `pdftoppm`，不可用时回退到随 `documents` extra 安装的 PyMuPDF
 - PPTX 页面渲染：LibreOffice / `soffice`
 - 首次视觉检索：SentenceTransformers 会下载 `clip-ViT-B-32`
 
@@ -262,12 +324,12 @@ slide2study build-negative-review-pack artifacts\course_chunks.jsonl artifacts\b
 
 ## 7. 推荐的下一阶段
 
-1. 从 3-5 门课程建立人工校验的 QA 数据集，每门先做 30-50 条。
+1. 在完整图片审阅包中人工复核公开候选集的 30 条问题、答案提示和证据页，固化首批
+   `verified` dev/test。
 2. 区分 text、formula、table/chart、visual-only、cross-page 五类问题。
 3. 用更大的 dev 集验证题型感知门控，避免 CLIP 降低文本题和跨页题排序。
-4. 使用本地审阅包人工复核 60 条平衡负例，去除语义相关但未标注的假负例。
-5. 使用复核后的 triplet 微调 Reranker，比较能否在不损害 Dense 首位命中的前提下改善困难查询。
-6. 在人工 test 集完成消融，然后再接带引用生成。
+4. 使用复核后的 triplet 微调 Reranker，比较能否在不损害 Dense 首位命中的前提下改善困难查询。
+5. 在人工 test 集完成消融，然后再接带引用生成。
 
 短期最重要的不是继续堆功能，而是先获得可信的评测集和 baseline 数字。
 

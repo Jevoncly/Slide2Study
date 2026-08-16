@@ -26,8 +26,14 @@ from slide2study.fusion import (
     ReciprocalRankFusionRetriever,
 )
 from slide2study.io import load_chunks, read_jsonl, write_jsonl
-from slide2study.negative_review import build_negative_review_pack
+from slide2study.negative_review import apply_negative_reviews, build_negative_review_pack
 from slide2study.parsing import build_parse_report, get_parser
+from slide2study.reranking import (
+    CrossEncoderReranker,
+    RerankedRetriever,
+    build_reranker_pairs,
+    train_cross_encoder,
+)
 from slide2study.retrieval import BM25Retriever, DenseRetriever
 from slide2study.review import build_review_pack
 from slide2study.training import mine_hard_negatives
@@ -286,6 +292,47 @@ def build_parser() -> argparse.ArgumentParser:
     negative_review.add_argument("corpus", type=Path)
     negative_review.add_argument("triplets", type=Path)
     negative_review.add_argument("--output", type=Path, required=True)
+
+    apply_reviews = commands.add_parser(
+        "apply-negative-reviews", help="Filter reviewed negatives into training triplets"
+    )
+    apply_reviews.add_argument("reviews", type=Path)
+    apply_reviews.add_argument("--output", type=Path, required=True)
+    apply_reviews.add_argument(
+        "--allow-incomplete",
+        action="store_true",
+        help="Filter valid negatives even when pending or uncertain rows remain",
+    )
+
+    train_reranker = commands.add_parser(
+        "train-reranker", help="Fine-tune a cross-encoder from reviewed triplets"
+    )
+    train_reranker.add_argument("corpus", type=Path)
+    train_reranker.add_argument("triplets", type=Path)
+    train_reranker.add_argument("--output-dir", type=Path, required=True)
+    train_reranker.add_argument("--model", default="intfloat/multilingual-e5-small")
+    train_reranker.add_argument("--device")
+    train_reranker.add_argument("--batch-size", type=int, default=8)
+    train_reranker.add_argument("--epochs", type=int, default=1)
+    train_reranker.add_argument("--learning-rate", type=float, default=2e-5)
+    train_reranker.add_argument("--seed", type=int, default=42)
+    train_reranker.add_argument("--local-files-only", action="store_true")
+
+    reranker_evaluation = commands.add_parser(
+        "reranker-evaluate", help="Evaluate Dense candidates reordered by a cross-encoder"
+    )
+    reranker_evaluation.add_argument("corpus", type=Path)
+    reranker_evaluation.add_argument("dataset", type=Path)
+    reranker_evaluation.add_argument("--cache", type=Path, required=True)
+    reranker_evaluation.add_argument("--reranker", type=Path, required=True)
+    reranker_evaluation.add_argument("--model")
+    reranker_evaluation.add_argument("--device")
+    reranker_evaluation.add_argument("--batch-size", type=int, default=32)
+    reranker_evaluation.add_argument("--levels", type=_parse_levels, default={"passage"})
+    reranker_evaluation.add_argument("--top-k", type=int, default=5)
+    reranker_evaluation.add_argument("--candidate-k", type=int, default=20)
+    reranker_evaluation.add_argument("--split", choices=sorted(DATASET_SPLITS), default="dev")
+    reranker_evaluation.add_argument("--output", type=Path)
     return parser
 
 
@@ -682,6 +729,83 @@ def main(argv: list[str] | None = None) -> int:
         chunks = load_chunks(args.corpus)
         triplets = list(read_jsonl(args.triplets))
         _print_json(build_negative_review_pack(triplets, chunks, args.output), indent=2)
+        return 0
+    if args.command == "apply-negative-reviews":
+        reviewed_rows = list(read_jsonl(args.reviews))
+        triplets, summary = apply_negative_reviews(
+            reviewed_rows, require_complete=not args.allow_incomplete
+        )
+        write_jsonl(triplets, args.output)
+        summary["output"] = str(args.output)
+        _print_json(summary, indent=2)
+        return 0
+    if args.command == "train-reranker":
+        chunks = load_chunks(args.corpus)
+        triplets = list(read_jsonl(args.triplets))
+        pairs, data_summary = build_reranker_pairs(triplets, chunks)
+        training_summary = train_cross_encoder(
+            pairs,
+            args.output_dir,
+            model_name=args.model,
+            device=args.device,
+            batch_size=args.batch_size,
+            epochs=args.epochs,
+            learning_rate=args.learning_rate,
+            seed=args.seed,
+            local_files_only=args.local_files_only,
+        )
+        _print_json({"data": data_summary, "training": training_summary}, indent=2)
+        return 0
+    if args.command == "reranker-evaluate":
+        corpus_chunks = load_chunks(args.corpus)
+        chunks = [chunk for chunk in corpus_chunks if chunk.level in args.levels]
+        embeddings, cache_metadata = load_chunk_embedding_cache(chunks, args.cache, args.model)
+        model_name = args.model or cache_metadata["model"]
+        encoder = SentenceTransformersTextEncoder(
+            model_name,
+            args.device,
+            args.batch_size,
+            cache_metadata["query_prefix"],
+            cache_metadata["document_prefix"],
+        )
+        dense = DenseRetriever(chunks, encoder, embeddings)
+        retriever = RerankedRetriever(
+            dense, CrossEncoderReranker(args.reranker, args.device), args.candidate_k
+        )
+        examples = list(read_jsonl(args.dataset))
+        validation = validate_dataset(
+            examples,
+            require_question_types=True,
+            require_splits=True,
+            require_document_ids=True,
+            require_annotation_statuses=True,
+            chunks=corpus_chunks,
+        )
+        evaluation_examples = [row for row in examples if row.get("split") == args.split]
+        if not evaluation_examples:
+            raise ValueError(f"The dataset has no examples in split {args.split!r}")
+        report = {
+            "experiment": {
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "retriever": "dense-cross-encoder",
+                "dense_model": model_name,
+                "reranker": str(args.reranker.resolve()),
+                "top_k": args.top_k,
+                "candidate_k": args.candidate_k,
+                "levels": sorted(args.levels),
+                "split": args.split,
+                "evaluated_queries": len(evaluation_examples),
+            },
+            "dataset": validation.to_dict(),
+            "metrics": evaluate(retriever, evaluation_examples, args.top_k).to_dict(),
+        }
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(
+                json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+            report["output"] = str(args.output)
+        _print_json(report, indent=2)
         return 0
     if args.command == "inspect":
         pages = get_parser(args.document).parse(args.document)

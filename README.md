@@ -40,7 +40,8 @@ python -m pip install -e ".[documents]"
 slide2study ingest data/raw/lecture.pdf --output artifacts/lecture_chunks.jsonl
 ```
 
-页面视觉检索需要 Poppler；PPTX 还需要系统安装 LibreOffice。CLIP 编码依赖单独安装：
+PDF 页面渲染优先使用 Poppler，并在 Poppler 不可用时自动回退到 PyMuPDF；PPTX 仍需要系统
+安装 LibreOffice。CLIP 编码依赖单独安装：
 
 ```bash
 python -m pip install -e ".[documents,vision]"
@@ -55,6 +56,9 @@ slide2study text-hybrid-evaluate artifacts/course_chunks.jsonl data/private/eval
 slide2study dense-mine-negatives artifacts/course_chunks.jsonl data/private/eval.jsonl --cache artifacts/dense_embeddings.json --split train --top-k 20 --output artifacts/dense_triplets.jsonl
 slide2study dense-mine-negatives artifacts/course_chunks.jsonl data/private/eval.jsonl --cache artifacts/dense_embeddings.json --split train --hard-per-query 2 --medium-per-query 1 --easy-per-query 1 --output artifacts/balanced_triplets.jsonl
 slide2study build-negative-review-pack artifacts/course_chunks.jsonl artifacts/balanced_triplets.jsonl --output artifacts/negative_review/index.html
+slide2study apply-negative-reviews artifacts/negative_review/reviewed-negative-triplets.jsonl --output artifacts/reviewed_train_triplets.jsonl
+slide2study train-reranker artifacts/course_chunks.jsonl artifacts/reviewed_train_triplets.jsonl --output-dir artifacts/reranker --epochs 1
+slide2study reranker-evaluate artifacts/course_chunks.jsonl data/private/eval.jsonl --cache artifacts/dense_embeddings.json --reranker artifacts/reranker --split dev --output artifacts/reranker_dev_report.json
 ```
 
 `render-pages` 为每页生成稳定的 PNG、尺寸、原始文档路径、页码、SHA-256、页面角色和
@@ -81,6 +85,14 @@ passage 仍全部排除出负例。
 `build-negative-review-pack` 生成仅在本机使用的交互式 HTML，支持标记有效负例、假负例或
 不确定，并导出带人工决定和备注的 JSONL。
 审阅数据带内容指纹；重新生成内容后会使用新的浏览器本地进度空间，避免旧决定错配。
+`apply-negative-reviews` 默认要求全部条目已明确复核，只保留 `valid_negative`，并去除审阅
+页面预览字段，输出可直接供训练使用的规范 triplet；存在 `pending` 或 `uncertain` 时会拒绝
+生成，除非显式使用 `--allow-incomplete`。
+`train-reranker` 将规范 triplet 展开为 query-positive 和 query-negative 二分类样本，正例对会
+自动去重；默认从 multilingual-e5-small 初始化交叉编码器分类头，固定随机种子，并将模型
+checkpoint 与训练配置写入输出目录。该命令建立训练链路，正式模型选择仍需独立 dev 集。
+`reranker-evaluate` 从缓存 Dense 检索获取较宽的候选集，再用 cross-encoder 重排，并使用同一
+套 Recall、MRR、nDCG 和延迟指标评估；模型选择只应使用 dev split。
 
 每条检索结果都包含基于文件内容 SHA-256 生成的稳定 `document_id`、`page_start`、
 `page_end`、`section` 和稳定的 `chunk_id`，可直接作为引用生成的 evidence。原始文件名保存在
@@ -89,6 +101,44 @@ chunk metadata 中；同一内容改名后 `document_id` 不变。
 `inspect` 报告还会输出 `page_roles`、`requires_vision_pages`、
 `text_retrieval_excluded_pages` 和 `removed_boilerplate_lines`。视觉页不会被删除：原始文本保存在
 页面元数据中，供后续页面图像检索和引用回溯使用。
+
+## 公开课件—复习资料对应组
+
+`data/public_course_pairs.json` 记录可复现的公开来源、主题对应关系、原始 URL 和许可边界。
+首批包含 3 个来源、4 个主题对应组：MIT 6.006 的动态规划，Berkeley CS188 的 Search 与
+MDP，以及 OpenDSA 的 Sorting Part 1。下载 PDF：
+
+```powershell
+python scripts/download_public_course_pairs.py data/public_course_pairs.json
+$files = Get-ChildItem data/raw/public_course_pairs -Recurse -Filter *.pdf | Select-Object -ExpandProperty FullName
+slide2study ingest-corpus $files --output artifacts/public_course_pairs_chunks.jsonl
+```
+
+原始下载位于被 Git 忽略的 `data/raw/public_course_pairs/`；下载报告记录每个文件的 URL、
+SHA-256、大小、角色与许可。MIT OCW 内容遵循 CC BY-NC-SA 4.0，使用时必须署名、限非商业
+并以相同许可共享。Berkeley 文件虽可公开访问，但没有找到逐文件再分发授权，因此只用于
+本地研究，不提交原文件。OpenDSA 源码使用 MIT License；其同一模块可编译为演示幻灯片和
+带注释讲义，并与练习源文件精确对应。公开来源只是候选语料，不能替代人工 QA 标注。
+
+首批公开检索候选集由复习资料提供问题方向，但正例只允许指向 7 份对应课件，避免把答案或
+discussion 文件混入检索语料造成泄漏：
+
+```powershell
+python scripts/build_public_eval_candidates.py artifacts/public_courseware_chunks.jsonl `
+  --output data/public_course_eval_candidates.jsonl
+slide2study validate-dataset data/public_course_eval_candidates.jsonl `
+  --corpus artifacts/public_courseware_chunks.jsonl --strict
+slide2study build-review-pack artifacts/public_courseware_chunks.jsonl `
+  data/public_course_eval_candidates.jsonl --output artifacts/public_course_review/index.html
+```
+
+当前 30 条记录全部为 `candidate`：train/dev/test 为 18/6/6，AI 语义复核后题型包含 17 条
+text、9 条 formula、3 条 cross-page 和 1 条 visual-only。PDF 回退渲染已覆盖 7 份课件的
+256 页；审阅包中的 33 个证据页
+图片全部存在，且已逐页检查清晰度、裁切和页面对应关系。视觉材料已具备人工标注条件，但
+只有人工确认问题、答案提示与证据页的语义对应后，才能将记录改为 `verified` 并作为正式
+测试集使用。AI 复核记录保存在 `data/public_course_eval_ai_review.jsonl`：23 条无需修改，7 条
+已修正证据页或题型，0 条拒绝。
 
 ## 评测集格式
 

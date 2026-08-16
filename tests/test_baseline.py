@@ -26,7 +26,7 @@ from slide2study.identifiers import stable_document_id
 from slide2study.interfaces import MultimodalPageEncoder
 from slide2study.io import read_jsonl, write_jsonl
 from slide2study.models import Chunk, Page, RenderedPage, SearchResult
-from slide2study.negative_review import build_negative_review_pack
+from slide2study.negative_review import apply_negative_reviews, build_negative_review_pack
 from slide2study.parsing import (
     PDFParser,
     PPTXParser,
@@ -34,6 +34,7 @@ from slide2study.parsing import (
     build_parse_report,
     prepare_pages_for_retrieval,
 )
+from slide2study.reranking import RerankedRetriever, build_reranker_pairs
 from slide2study.retrieval import BM25Retriever, DenseRetriever, mixed_tokenize
 from slide2study.review import build_review_pack
 from slide2study.training import mine_hard_negatives
@@ -390,6 +391,84 @@ class BaselineTests(unittest.TestCase):
         self.assertIn(summary["fingerprint"], html)
         self.assertIn("Slide2Study 困难负例复核", html)
         self.assertIn("false_negative", html)
+
+    def test_apply_negative_reviews_keeps_only_canonical_valid_triplets(self):
+        base = {
+            "query": "question",
+            "positive_chunk_id": "positive",
+            "negative_chunk_id": "negative",
+            "negative_rank": 2,
+            "miner": "dense:test",
+            "difficulty": "hard",
+        }
+        rows = [
+            {
+                **base,
+                "review_id": "negative-0001",
+                "review_decision": "valid_negative",
+                "review_note": "checked",
+                "positive": {"text": "preview"},
+            },
+            {
+                **base,
+                "review_id": "negative-0002",
+                "negative_chunk_id": "relevant",
+                "review_decision": "false_negative",
+            },
+        ]
+        triplets, summary = apply_negative_reviews(rows)
+        self.assertEqual(triplets, [base])
+        self.assertEqual(summary["retained_triplets"], 1)
+        self.assertEqual(summary["rejected_triplets"], 1)
+        self.assertEqual(summary["queries_retained"], 1)
+
+    def test_apply_negative_reviews_rejects_incomplete_review_by_default(self):
+        with self.assertRaisesRegex(ValueError, "review is incomplete"):
+            apply_negative_reviews(
+                [{"review_id": "negative-0001", "review_decision": "uncertain"}]
+            )
+
+    def test_reranker_pairs_deduplicate_positive_examples(self):
+        chunks = [
+            Chunk("positive", "deck", 1, 1, "correct evidence"),
+            Chunk("negative-1", "deck", 2, 2, "first distractor"),
+            Chunk("negative-2", "deck", 3, 3, "second distractor"),
+        ]
+        triplets = [
+            {
+                "query": "question",
+                "positive_chunk_id": "positive",
+                "negative_chunk_id": negative,
+            }
+            for negative in ("negative-1", "negative-2")
+        ]
+        pairs, summary = build_reranker_pairs(triplets, chunks)
+        self.assertEqual(summary["pairs"], 3)
+        self.assertEqual(summary["positive_pairs"], 1)
+        self.assertEqual(summary["negative_pairs"], 2)
+        self.assertEqual(sum(pair["label"] == 1.0 for pair in pairs), 1)
+
+    def test_reranked_retriever_uses_wider_candidate_set(self):
+        chunks = [Chunk(f"chunk-{index}", "deck", index, index, str(index)) for index in range(4)]
+
+        class RecordingRetriever:
+            requested = None
+
+            def search(self, _query, top_k=5):
+                self.requested = top_k
+                return [SearchResult(chunk, 1.0, rank) for rank, chunk in enumerate(chunks, 1)]
+
+        class ReverseReranker:
+            def rerank(self, _query, candidates):
+                return [
+                    SearchResult(item.chunk, float(rank), rank)
+                    for rank, item in enumerate(reversed(candidates), 1)
+                ]
+
+        base = RecordingRetriever()
+        results = RerankedRetriever(base, ReverseReranker(), candidate_k=4).search("q", top_k=2)
+        self.assertEqual(base.requested, 4)
+        self.assertEqual([item.chunk.chunk_id for item in results], ["chunk-3", "chunk-2"])
 
     def test_parse_report_flags_pages_that_need_vision(self):
         pages = [
@@ -892,6 +971,36 @@ class BaselineTests(unittest.TestCase):
             self.assertEqual((pages[0].width, pages[0].height), (320, 180))
             self.assertTrue(pages[1].requires_vision)
             self.assertEqual(len(pages[0].sha256), 64)
+
+    def test_pdf_renderer_falls_back_when_poppler_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "lecture.pdf"
+            source.write_bytes(b"placeholder")
+            expected = [
+                RenderedPage(
+                    "doc-test",
+                    1,
+                    str(root / "page-0001.png"),
+                    str(source),
+                    320,
+                    180,
+                    "abc",
+                )
+            ]
+            with (
+                patch(
+                    "slide2study.vision._render_pdf_with_poppler",
+                    side_effect=RuntimeError("Poppler failed"),
+                ),
+                patch(
+                    "slide2study.vision._render_pdf_with_pymupdf", return_value=expected
+                ) as fallback,
+            ):
+                pages = render_document(source, root / "rendered")
+
+            self.assertEqual(pages, expected)
+            fallback.assert_called_once()
 
     @unittest.skipUnless(importlib.util.find_spec("PIL"), "Pillow is not installed")
     def test_pptx_renderer_converts_before_page_rendering(self):

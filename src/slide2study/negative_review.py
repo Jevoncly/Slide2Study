@@ -7,6 +7,66 @@ from pathlib import Path
 
 from slide2study.models import Chunk
 
+REVIEW_DECISIONS = {"valid_negative", "false_negative", "uncertain", "pending"}
+TRIPLET_FIELDS = (
+    "query",
+    "positive_chunk_id",
+    "negative_chunk_id",
+    "negative_rank",
+    "miner",
+    "difficulty",
+)
+
+
+def apply_negative_reviews(
+    rows: list[dict], *, require_complete: bool = True
+) -> tuple[list[dict], dict]:
+    """Keep reviewed valid negatives and return canonical training triplets."""
+    decisions = Counter()
+    review_ids = set()
+    query_count = set()
+    retained_queries = set()
+    triplets = []
+    for line_number, row in enumerate(rows, 1):
+        review_id = str(row.get("review_id", "")).strip()
+        if review_id:
+            if review_id in review_ids:
+                raise ValueError(f"Duplicate review_id: {review_id}")
+            review_ids.add(review_id)
+        decision = str(row.get("review_decision", "pending") or "pending")
+        if decision not in REVIEW_DECISIONS:
+            raise ValueError(f"Unsupported review_decision on row {line_number}: {decision}")
+        decisions[decision] += 1
+        query = str(row.get("query", "")).strip()
+        if query:
+            query_count.add(query)
+        if decision != "valid_negative":
+            continue
+        missing = [field for field in TRIPLET_FIELDS if row.get(field) in (None, "")]
+        if missing:
+            raise ValueError(
+                f"Valid negative on row {line_number} is missing: {', '.join(missing)}"
+            )
+        triplets.append({field: row[field] for field in TRIPLET_FIELDS})
+        retained_queries.add(query)
+    incomplete = decisions["pending"] + decisions["uncertain"]
+    if require_complete and incomplete:
+        raise ValueError(
+            "Negative review is incomplete: "
+            f"{decisions['pending']} pending and {decisions['uncertain']} uncertain"
+        )
+    difficulty_counts = Counter(row["difficulty"] for row in triplets)
+    summary = {
+        "rows": len(rows),
+        "decisions": {name: decisions[name] for name in sorted(REVIEW_DECISIONS)},
+        "retained_triplets": len(triplets),
+        "rejected_triplets": len(rows) - len(triplets),
+        "difficulty_counts": dict(sorted(difficulty_counts.items())),
+        "queries": len(query_count),
+        "queries_retained": len(retained_queries),
+    }
+    return triplets, summary
+
 
 def build_negative_review_pack(
     triplets: list[dict], chunks: list[Chunk], output: str | Path

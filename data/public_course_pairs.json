@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "download_root": "data/raw/public_course_pairs",
+  "sources": [
+    {
+      "source_id": "mit-ocw-6-006-s20",
+      "course": "MIT 6.006 Introduction to Algorithms, Spring 2020",
+      "homepage": "https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/",
+      "license": "CC BY-NC-SA 4.0",
+      "license_url": "https://ocw.mit.edu/pages/privacy-and-terms-of-use/",
+      "redistribution": "noncommercial-attribution-sharealike",
+      "pairs": [
+        {
+          "pair_id": "dynamic-programming",
+          "topic": "Dynamic Programming",
+          "courseware": [
+            {"filename": "lecture-15-recursive-algorithms.pdf", "url": "https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/9eb3e9a51a7b5b60b0f67c2277f8b0ee_MIT6_006S20_lec15.pdf"},
+            {"filename": "lecture-16-dp-subproblems.pdf", "url": "https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/28461a74f81101874a13d9679a40584d_MIT6_006S20_lec16.pdf"},
+            {"filename": "lecture-17-dynamic-programming-3.pdf", "url": "https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/665523227a175e9e9ce26ea8d3e5b51c_MIT6_006S20_lec17.pdf"}
+          ],
+          "review": [
+            {"filename": "recitation-15.pdf", "url": "https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/6022dc36557c5e5df2ad0a77e9463855_MIT6_006S20_r15.pdf"},
+            {"filename": "recitation-16.pdf", "url": "https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/487dc976eabd0f9bcd6a3c385203ea27_MIT6_006S20_r16.pdf"},
+            {"filename": "recitation-17.pdf", "url": "https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/045bcc2846d6aef7bd77d597d74f213a_MIT6_006S20_r17.pdf"},
+            {"filename": "problem-session-8.pdf", "url": "https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/d0d8c112ee8e971b9dea560891f7c1da_MIT6_006S20_prob8.pdf"},
+            {"filename": "problem-session-8-solutions.pdf", "url": "https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/8d33b3dd726982ae22e109c8ad6a718b_MIT6_006S20_prob8sol.pdf"},
+            {"filename": "problem-set-7.pdf", "url": "https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/3dff7a1ecbc241e9b91b48e69a1588d4_MIT6_006S20_ps7_questions.pdf"},
+            {"filename": "problem-set-7-solutions.pdf", "url": "https://ocw.mit.edu/courses/6-006-introduction-to-algorithms-spring-2020/ed996e1569867432dc1fbdeae53e309f_MIT6_006S20_ps7_solutions.pdf"}
+          ]
+        }
+      ]
+    },
+    {
+      "source_id": "berkeley-cs188-sp26",
+      "course": "UC Berkeley CS188 Introduction to Artificial Intelligence, Spring 2026",
+      "homepage": "https://inst.eecs.berkeley.edu/~cs188/sp26/",
+      "license": "Public course access; per-file redistribution rights not stated",
+      "license_url": "https://inst.eecs.berkeley.edu/~cs188/sp26/policies/",
+      "redistribution": "local-research-only",
+      "pairs": [
+        {
+          "pair_id": "search",
+          "topic": "Uninformed and Informed Search",
+          "courseware": [
+            {"filename": "lecture-02-search.pdf", "url": "https://inst.eecs.berkeley.edu/~cs188/sp26/assets/lectures/cs188-sp26-lec02.pdf"},
+            {"filename": "lecture-03-informed-search.pdf", "url": "https://inst.eecs.berkeley.edu/~cs188/sp26/assets/lectures/cs188-sp26-lec03.pdf"}
+          ],
+          "review": [
+            {"filename": "discussion-01.pdf", "url": "https://inst.eecs.berkeley.edu/~cs188/sp26/assets/discussions/cs188-sp26-disc01.pdf"},
+            {"filename": "discussion-01-solutions.pdf", "url": "https://inst.eecs.berkeley.edu/~cs188/sp26/assets/discussions/cs188-sp26-disc01-sols.pdf"},
+            {"filename": "exam-prep-01.pdf", "url": "https://inst.eecs.berkeley.edu/~cs188/sp26/assets/discussions/cs188-sp26-examprep01.pdf"},
+            {"filename": "exam-prep-01-solutions.pdf", "url": "https://inst.eecs.berkeley.edu/~cs188/sp26/assets/discussions/cs188-sp26-examprep01-sols.pdf"}
+          ]
+        },
+        {
+          "pair_id": "mdp",
+          "topic": "Markov Decision Processes",
+          "courseware": [
+            {"filename": "lecture-09-mdp-1.pdf", "url": "https://inst.eecs.berkeley.edu/~cs188/sp26/assets/lectures/cs188-sp26-lec09.pdf"},
+            {"filename": "lecture-10-mdp-2.pdf", "url": "https://inst.eecs.berkeley.edu/~cs188/sp26/assets/lectures/cs188-sp26-lec10.pdf"}
+          ],
+          "review": [
+            {"filename": "discussion-04.pdf", "url": "https://inst.eecs.berkeley.edu/~cs188/sp26/assets/discussions/cs188-sp26-disc04.pdf"},
+            {"filename": "discussion-04-solutions.pdf", "url": "https://inst.eecs.berkeley.edu/~cs188/sp26/assets/discussions/cs188-sp26-disc04-sols.pdf"},
+            {"filename": "exam-prep-04.pdf", "url": "https://inst.eecs.berkeley.edu/~cs188/sp26/assets/discussions/cs188-sp26-examprep04.pdf"},
+            {"filename": "exam-prep-04-solutions.pdf", "url": "https://inst.eecs.berkeley.edu/~cs188/sp26/assets/discussions/cs188-sp26-examprep04-sols.pdf"}
+          ]
+        }
+      ]
+    },
+    {
+      "source_id": "opendsa",
+      "course": "OpenDSA CS3 Data Structures",
+      "homepage": "https://opendsa-server.cs.vt.edu/home/books",
+      "license": "MIT License",
+      "license_url": "https://opendsa-server.cs.vt.edu/home/license",
+      "redistribution": "permissive",
+      "repository": "https://github.com/OpenDSA/OpenDSA.git",
+      "pairing_note": "The same modules compile into presentation slides, annotated course notes, and exercises. Source checkout is downloaded separately for exact module mapping.",
+      "pairs": [
+        {
+          "pair_id": "sorting-part-1",
+          "topic": "Insertion, Bubble, and Selection Sort",
+          "repository_paths": {
+            "shared_courseware_source": "RST/en/CS3slides/Sorting1.rst",
+            "slides_config": "config/CS3S26slides.json",
+            "annotated_notes_config": "config/CS3S26notes.json",
+            "review_exercises": [
+              "Exercises/Sorting/InssortSumm.html",
+              "Exercises/Sorting/BubsortSumm.html",
+              "Exercises/Sorting/SelsortSumm.html"
+            ],
+            "visualizations": [
+              "AV/Sorting/insertionsortCON.js",
+              "AV/Sorting/bubblesortS1CON.js",
+              "AV/Sorting/selectionsortS1CON.js"
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

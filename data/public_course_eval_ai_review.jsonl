@@ -1,0 +1,30 @@
+{"id":"public-dp-001","reviewer_type":"ai","decision":"approved_no_change","note":"第3页直接说明自顶向下记忆化与自底向上拓扑顺序，问题、答案和证据一致。"}
+{"id":"public-dp-002","reviewer_type":"ai","decision":"approved_no_change","note":"第4页完整列出SRT BOT六步，答案概括准确。"}
+{"id":"public-dp-003","reviewer_type":"ai","decision":"approved_no_change","note":"第5页包含DAG最短路状态、递推式和拓扑顺序，formula题型正确。"}
+{"id":"public-dp-004","reviewer_type":"ai","decision":"approved_no_change","note":"第6页完整给出跳过、单打、双打三种选择及线性时间。"}
+{"id":"public-dp-005","reviewer_type":"ai","decision":"approved_no_change","note":"第2页完整给出LCS匹配与不匹配两种递推分支。"}
+{"id":"public-dp-006","reviewer_type":"ai","decision":"approved_no_change","note":"第4页明确解释加入首元素约束的原因及原问题的最大化恢复方式。"}
+{"id":"public-dp-007","reviewer_type":"ai","decision":"approved_no_change","note":"第6页包含区间状态与首尾取币递推，公式需结合页面视觉读取。"}
+{"id":"public-dp-008","reviewer_type":"ai","decision":"approved_no_change","note":"第8页直接给出子问题约束或扩展的建模建议与权衡。"}
+{"id":"public-dp-009","reviewer_type":"ai","decision":"approved_no_change","note":"第2页完整覆盖边数参数、无环依赖和负环判定。"}
+{"id":"public-dp-010","reviewer_type":"ai","decision":"approved_no_change","note":"第3页完整覆盖Floyd-Warshall状态、递推和三次复杂度。"}
+{"id":"public-search-001","reviewer_type":"ai","decision":"approved_no_change","note":"第14页逐项定义搜索问题并给出解的定义。"}
+{"id":"public-search-002","reviewer_type":"ai","decision":"approved_no_change","note":"第20页直接列出Safe Passage状态所需四类信息。"}
+{"id":"public-search-003","reviewer_type":"ai","decision":"approved_after_revision","note":"原第31页只说明探索策略问题；补入第30页的fringe定义，并改为cross_page。"}
+{"id":"public-search-004","reviewer_type":"ai","decision":"approved_no_change","note":"第47页直接给出UCS扩展范围、完备性和最优性条件。"}
+{"id":"public-search-005","reviewer_type":"ai","decision":"approved_after_revision","note":"原第49页缺少UCS累计路径代价；补入第46页并改为cross_page。"}
+{"id":"public-search-006","reviewer_type":"ai","decision":"approved_no_change","note":"第16页直接定义启发式并说明其问题特定性。"}
+{"id":"public-search-007","reviewer_type":"ai","decision":"approved_no_change","note":"第22页说明Greedy只按目标接近程度并展示次优和类DFS后果。"}
+{"id":"public-search-008","reviewer_type":"ai","decision":"approved_no_change","note":"第25页完整给出A*的f等于g加h及两部分含义。"}
+{"id":"public-search-009","reviewer_type":"ai","decision":"approved_after_revision","note":"终止规则有文字，但解释为什么需要读取图中的路径代价，题型改为visual_only。"}
+{"id":"public-search-010","reviewer_type":"ai","decision":"approved_after_revision","note":"第60页单独即可完整回答树搜索、图搜索条件及蕴含关系，删除冗余页并改为text。"}
+{"id":"public-mdp-001","reviewer_type":"ai","decision":"approved_no_change","note":"第10页完整列出MDP的状态、动作、转移、奖励和边界状态。"}
+{"id":"public-mdp-002","reviewer_type":"ai","decision":"approved_no_change","note":"第11页直接说明给定当前状态后结果与历史无关。"}
+{"id":"public-mdp-003","reviewer_type":"ai","decision":"approved_no_change","note":"第12页对比固定计划和策略，并定义策略为从状态到动作的映射。"}
+{"id":"public-mdp-004","reviewer_type":"ai","decision":"approved_after_revision","note":"第21页已完整给出折扣方法和数值例子，第20页不构成必要证据，已删除。"}
+{"id":"public-mdp-005","reviewer_type":"ai","decision":"approved_no_change","note":"第24页明确列出有限时域、折扣和吸收状态三种方案。"}
+{"id":"public-mdp-006","reviewer_type":"ai","decision":"approved_no_change","note":"第27页直接区分V星、Q星和最优策略。"}
+{"id":"public-mdp-007","reviewer_type":"ai","decision":"approved_no_change","note":"第34页直接定义有限时域价值并等价到深度k的expectimax。"}
+{"id":"public-mdp-008","reviewer_type":"ai","decision":"approved_no_change","note":"第51页包含初始化、逐状态备份和每轮复杂度。"}
+{"id":"public-mdp-009","reviewer_type":"ai","decision":"approved_after_revision","note":"第26页给出两种评估方法；将第23页替换为第22页，以直接支持固定策略每状态只有一个动作、无需max。"}
+{"id":"public-mdp-010","reviewer_type":"ai","decision":"approved_after_revision","note":"第47页已完整说明评估、改进和停止条件，第49页为冗余比较页，删除并改为text。"}
