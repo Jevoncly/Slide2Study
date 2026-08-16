@@ -20,6 +20,19 @@ Slide2Study 是一个面向课程 Slides/PDF 的多模态、结构感知 RAG 项
 
 Python 3.10+：
 
+面向实际使用，安装文档依赖后用一条命令把一个或多个 PDF/PPTX 构建为离线学习站点：
+
+```bash
+python -m pip install -e ".[documents]"
+slide2study build-offline-course lecture1.pdf lecture2.pdf --output-dir my_course
+```
+
+完成后直接打开 `my_course/study_ui/index.html`。输出同时保留课程 chunk 和页面清单，整个生成
+过程不需要 API key，也不会上传课件。当前 MVP 包含章节摘要、重点概念、公式证据、闪卡和基础
+简答题；应用题与综合题暂不纳入当前可用版本。
+
+以下命令用于开发、评测和分步调试：
+
 ```bash
 python -m pip install -e .
 slide2study ingest examples/sample_course.txt --output artifacts/sample_chunks.jsonl --max-chars 200
@@ -108,7 +121,7 @@ BM25 与 CLIP；同一报告包含三路指标及逐题 Top 页面、命中状�
 概念、闪卡、公式/参数和基础题的“通过、需修正、不适用”，支持备注、本机进度和 JSONL 导出；复核包
 使用内容指纹隔离浏览器状态，重新生成内容后不会沿用旧决定。
 基础题仅由已经通过定义质量门槛的概念生成，答案必须逐字存在于证据文本；可用 `--questions`
-控制每章上限。应用题与综合题尚不自动生成，避免离线规则机械拼接出低质量题目。
+控制每章上限。应用题与综合题不纳入当前 MVP，避免离线规则机械拼接出低质量题目。
 `text-hybrid-evaluate` 对 BM25、Dense 和加权 RRF 使用同一批 chunk，保存三路指标和逐题
 Top chunk 诊断。融合参数必须只在 dev 上选择；如果 test 未超过 Dense，应继续使用 Dense
 单路作为默认检索器。

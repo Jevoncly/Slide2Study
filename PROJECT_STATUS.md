@@ -474,11 +474,22 @@ multimodal page retriever。
   当前生成 25 道基础题，全部通过答案原文包含检查。应用题和综合题继续保持未实现状态，避免
   在没有可靠离线规则时机械拼接。
 
+### 3.35 可投入使用的离线 MVP 入口
+
+- 当前版本范围冻结为章节摘要、重点概念、公式证据、闪卡和基础简答题；应用题与综合题暂不
+  纳入 MVP，后续只有在存在可靠质量门槛时才重新评估。
+- 新增 `build-offline-course` 一键入口：接收一个或多个 PDF/PPTX，依次完成解析、层级切块、
+  页面渲染、课程学习材料生成和静态站点构建，同时保存 `course_chunks.jsonl`、
+  `page_manifest.jsonl` 与 `study_ui/index.html`。流程不需要外部 API，也不会上传课件。
+- 使用真实 `lecture-02-search.pdf` 完成端到端烟雾测试：52 页、104 个 chunk、10 个可用章节，
+  生成 40 条摘要、1 个概念/闪卡/基础题和 2 条公式，约 3.7 秒完成；结果位于被忽略的
+  `artifacts/offline_course_smoke/`。
+
 ## 4. 验证证据
 
 ### 4.1 自动化测试
 
-- 当前测试：75/75 通过；Ruff 检查通过。
+- 当前测试：77/77 通过；Ruff 检查通过。
 - 测试覆盖：解析、质量诊断、三层 chunk、层级校验、BM25、评测指标、hard negatives、
   页面清单、PDF/PPTX 渲染流程、向量缓存及哈希校验、视觉页面排序、页面级评测、
   通用 chunk→page 映射、页面/chunk 加权 RRF、题型路由、逐题诊断、Dense 排序、chunk 缓存
@@ -575,8 +586,8 @@ slide2study build-negative-review-pack artifacts\course_chunks.jsonl artifacts\b
 1. 保持 Dense 为默认检索器，将 Reranker 记录为“dev 提升、扩充 test 未复现”的失败消融；
    不得围绕当前 test 调模型或 candidate-k。
 2. 题型路由已经在 42 条 dev 上冻结；不得再用现有 18 条已查看 test 验证或调参。
-3. 先完成 30 个章节的生成质量复核并分析四类通过率；根据真实错误修正规则后，再从公式邻近
-   定义句提取符号含义并实现带证据的分层题库。
+3. 当前离线生成 MVP 已通过 30 章人工复核；后续优先做安装包、错误提示和首次使用体验，不再
+   把应用题或综合题作为当前版本的交付阻塞项。
 
 短期最重要的不是继续堆功能，而是先获得可信的评测集和 baseline 数字。
 

@@ -354,6 +354,23 @@ def build_parser() -> argparse.ArgumentParser:
     study_review.add_argument("--questions", type=int, default=4)
     study_review.add_argument("--output-dir", type=Path, required=True)
 
+    offline_course = commands.add_parser(
+        "build-offline-course",
+        help="Turn PDF/PPTX course files into a ready-to-open offline study site",
+    )
+    offline_course.add_argument("documents", nargs="+", type=Path)
+    offline_course.add_argument("--output-dir", type=Path, required=True)
+    offline_course.add_argument("--max-chars", type=int, default=500)
+    offline_course.add_argument("--overlap", type=int, default=1)
+    offline_course.add_argument("--dpi", type=int, default=144)
+    offline_course.add_argument("--pdftoppm", type=Path)
+    offline_course.add_argument("--soffice", type=Path)
+    offline_course.add_argument("--summary-bullets", type=int, default=4)
+    offline_course.add_argument("--flashcards", type=int, default=4)
+    offline_course.add_argument("--concepts", type=int, default=4)
+    offline_course.add_argument("--formulas", type=int, default=4)
+    offline_course.add_argument("--questions", type=int, default=4)
+
     evaluation = commands.add_parser("evaluate", help="Evaluate BM25 on a JSONL QA set")
     evaluation.add_argument("corpus", type=Path)
     evaluation.add_argument("dataset", type=Path)
@@ -482,6 +499,83 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "build-offline-course":
+        started_at = perf_counter()
+        unsupported = [
+            str(document)
+            for document in args.documents
+            if document.suffix.casefold() not in {".pdf", ".pptx"}
+        ]
+        if unsupported:
+            raise ValueError(
+                "build-offline-course supports only PDF/PPTX files because page previews "
+                f"are required: {unsupported}"
+            )
+        target = args.output_dir
+        target.mkdir(parents=True, exist_ok=True)
+        rendered_dir = target / "rendered_pages"
+        all_chunks = []
+        rendered_pages = []
+        documents = []
+        seen_document_ids: set[str] = set()
+        for document in args.documents:
+            pages = get_parser(document).parse(document)
+            document_id = pages[0].document_id if pages else None
+            if not document_id:
+                raise ValueError(f"Document contains no pages: {document}")
+            if document_id in seen_document_ids:
+                raise ValueError(f"Duplicate document content: {document}")
+            seen_document_ids.add(document_id)
+            chunks = HierarchicalChunker(args.max_chars, args.overlap).chunk(pages)
+            rendered = render_document(
+                document,
+                rendered_dir,
+                dpi=args.dpi,
+                pdftoppm_executable=args.pdftoppm,
+                soffice_executable=args.soffice,
+                page_metadata={page.page_number: page.metadata for page in pages},
+            )
+            all_chunks.extend(chunks)
+            rendered_pages.extend(rendered)
+            documents.append(
+                {
+                    "source_name": document.name,
+                    "document_id": document_id,
+                    "pages": len(pages),
+                    "chunks": len(chunks),
+                }
+            )
+        corpus = target / "course_chunks.jsonl"
+        manifest = target / "page_manifest.jsonl"
+        write_jsonl((chunk.to_dict() for chunk in all_chunks), corpus)
+        write_page_manifest(rendered_pages, manifest)
+        guides = build_course_study_guides(
+            all_chunks,
+            summary_bullets=args.summary_bullets,
+            flashcard_count=args.flashcards,
+            concept_count=args.concepts,
+            formula_count=args.formulas,
+            question_count=args.questions,
+        )
+        site = build_course_study_ui(guides, rendered_pages, target / "study_ui")
+        _print_json(
+            {
+                "mode": "offline-course",
+                "documents": documents,
+                "sections": len(guides),
+                "summary_bullets": sum(len(guide.summary) for guide in guides),
+                "flashcards": sum(len(guide.flashcards) for guide in guides),
+                "concepts": sum(len(guide.concepts) for guide in guides),
+                "formulas": sum(len(guide.formulas) for guide in guides),
+                "questions": sum(len(guide.questions) for guide in guides),
+                "corpus": str(corpus),
+                "manifest": str(manifest),
+                "site": str(site),
+                "latency_ms": {"end_to_end": round((perf_counter() - started_at) * 1000, 3)},
+            },
+            indent=2,
+        )
+        return 0
     if args.command == "render-pages":
         parsed_pages = get_parser(args.document).parse(args.document)
         rendered_pages = render_document(
