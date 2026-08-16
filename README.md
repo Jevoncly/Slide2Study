@@ -53,6 +53,7 @@ slide2study visual-index --manifests artifacts/pages/*.jsonl --output artifacts/
 slide2study visual-evaluate artifacts/course_chunks.jsonl data/private/eval.jsonl --manifests artifacts/pages/*.jsonl --cache artifacts/page_embeddings.json --split test --top-k 5 --output artifacts/clip_report.json
 slide2study hybrid-evaluate artifacts/course_chunks.jsonl data/private/eval.jsonl --manifests artifacts/pages/*.jsonl --cache artifacts/page_embeddings.json --split test --top-k 5 --output artifacts/hybrid_report.json
 slide2study dense-index artifacts/course_chunks.jsonl --output artifacts/dense_embeddings.json --levels passage
+slide2study answer artifacts/course_chunks.jsonl "What does lambda control?" --top-k 5 --output artifacts/cited_answer.json
 slide2study dense-evaluate artifacts/course_chunks.jsonl data/private/eval.jsonl --cache artifacts/dense_embeddings.json --split test --top-k 5 --output artifacts/dense_report.json
 slide2study text-hybrid-evaluate artifacts/course_chunks.jsonl data/private/eval.jsonl --cache artifacts/dense_embeddings.json --bm25-weight 0.25 --dense-weight 1 --split test --output artifacts/text_hybrid_report.json
 slide2study type-aware-evaluate artifacts/course_chunks.jsonl data/private/eval.jsonl --manifests artifacts/pages/*.jsonl --dense-cache artifacts/dense_embeddings.json --visual-cache artifacts/page_embeddings.json --route text=bm25_page --route table_chart=clip_page --route visual_only=clip_page --split dev --output artifacts/type_aware_dev.json
@@ -78,6 +79,10 @@ BM25 与 CLIP；同一报告包含三路指标及逐题 Top 页面、命中状�
 `dense-index` 默认使用 `intfloat/multilingual-e5-small`，按模型要求为问题和证据分别添加
 `query: ` 与 `passage: ` 前缀，批量生成归一化文本向量。缓存记录模型、前缀、chunk ID、
 文本 SHA-256 和向量；`dense-evaluate` 校验缓存后复用同一评测框架。
+`answer` 提供无需联网模型的带引用生成基线：先用 BM25 检索 passage，再从检索证据中选择
+最相关的原文句子，并统一追加 `[source, p.N]` 引用。引用对象只能由本次检索结果构造；生成
+后端返回未知证据 ID 时会安全拒答，无实质词项重合或无可用证据时也不会拼凑答案。该命令
+用于验证 P4 的引用安全闭环，后续可在相同后端协议上接入 LLM。
 `text-hybrid-evaluate` 对 BM25、Dense 和加权 RRF 使用同一批 chunk，保存三路指标和逐题
 Top chunk 诊断。融合参数必须只在 dev 上选择；如果 test 未超过 Dense，应继续使用 Dense
 单路作为默认检索器。

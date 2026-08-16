@@ -1,17 +1,61 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import Protocol
 
 from slide2study.models import PageSearchResult, SearchResult
 
 
+@dataclass(frozen=True, slots=True)
+class EvidenceCitation:
+    evidence_id: str
+    document_id: str
+    page_start: int
+    page_end: int
+    source_name: str
+    chunk_id: str
+
+    @property
+    def label(self) -> str:
+        page_label = (
+            f"p.{self.page_start}"
+            if self.page_start == self.page_end
+            else f"pp.{self.page_start}-{self.page_end}"
+        )
+        return f"[{self.source_name}, {page_label}]"
+
+    def to_dict(self) -> dict[str, object]:
+        return {**asdict(self), "label": self.label}
+
+
 @dataclass(slots=True)
 class CitedStudyMaterial:
     content: str
-    cited_pages: list[int]
+    citations: list[EvidenceCitation]
     kind: str
+    refused: bool = False
+    refusal_reason: str | None = None
+
+    @property
+    def cited_pages(self) -> list[int]:
+        return sorted(
+            {
+                page
+                for citation in self.citations
+                for page in range(citation.page_start, citation.page_end + 1)
+            }
+        )
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "content": self.content,
+            "kind": self.kind,
+            "refused": self.refused,
+            "refusal_reason": self.refusal_reason,
+            "citations": [citation.to_dict() for citation in self.citations],
+            "cited_pages": self.cited_pages,
+        }
 
 
 class StudyMaterialGenerator(ABC):

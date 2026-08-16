@@ -28,6 +28,7 @@ from slide2study.fusion import (
     ReciprocalRankFusionChunkRetriever,
     ReciprocalRankFusionRetriever,
 )
+from slide2study.generation import GroundedAnswerGenerator
 from slide2study.io import load_chunks, read_jsonl, write_jsonl
 from slide2study.negative_review import apply_negative_reviews, build_negative_review_pack
 from slide2study.parsing import build_parse_report, get_parser
@@ -275,6 +276,15 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("query")
     search.add_argument("--top-k", type=int, default=5)
     search.add_argument("--levels", type=_parse_levels, default=set(CHUNK_LEVELS))
+
+    answer = commands.add_parser(
+        "answer", help="Retrieve evidence and produce a page-cited extractive answer"
+    )
+    answer.add_argument("corpus", type=Path)
+    answer.add_argument("query")
+    answer.add_argument("--top-k", type=int, default=5)
+    answer.add_argument("--levels", type=_parse_levels, default={"passage"})
+    answer.add_argument("--output", type=Path)
 
     evaluation = commands.add_parser("evaluate", help="Evaluate BM25 on a JSONL QA set")
     evaluation.add_argument("corpus", type=Path)
@@ -1141,6 +1151,23 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "search":
         results = retriever.search(args.query, args.top_k)
         _print_json([result.to_dict() for result in results], indent=2)
+        return 0
+    if args.command == "answer":
+        evidence = retriever.search(args.query, args.top_k)
+        material = GroundedAnswerGenerator().generate(args.query, evidence)
+        report = {
+            **material.to_dict(),
+            "query": args.query,
+            "retriever": "bm25",
+            "retrieved_chunk_ids": [result.chunk.chunk_id for result in evidence],
+        }
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(
+                json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+            report["output"] = str(args.output)
+        _print_json(report, indent=2)
         return 0
     examples = list(read_jsonl(args.dataset))
     if args.command == "mine-negatives":
