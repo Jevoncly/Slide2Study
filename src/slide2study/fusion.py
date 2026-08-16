@@ -11,18 +11,18 @@ def _page_key(page: RenderedPage) -> tuple[str, int]:
     return page.document_id, page.page_number
 
 
-class BM25PageRetriever:
-    """Project ranked BM25 chunks onto their rendered evidence pages."""
+class ChunkPageRetriever:
+    """Project any ranked chunk retriever onto rendered evidence pages."""
 
     def __init__(
         self,
-        chunks: Sequence[Chunk],
+        retriever: Retriever,
         pages: Sequence[RenderedPage],
         candidate_k: int = 50,
     ):
         if candidate_k < 1:
             raise ValueError("candidate_k must be at least 1")
-        self.retriever = BM25Retriever(list(chunks))
+        self.retriever = retriever
         self.pages_by_key = {_page_key(page): page for page in pages}
         self.candidate_k = candidate_k
 
@@ -45,6 +45,18 @@ class BM25PageRetriever:
             PageSearchResult(page, round(score, 8), rank)
             for rank, (_, score, page) in enumerate(ranked[:top_k], 1)
         ]
+
+
+class BM25PageRetriever(ChunkPageRetriever):
+    """Project ranked BM25 chunks onto their rendered evidence pages."""
+
+    def __init__(
+        self,
+        chunks: Sequence[Chunk],
+        pages: Sequence[RenderedPage],
+        candidate_k: int = 50,
+    ):
+        super().__init__(BM25Retriever(list(chunks)), pages, candidate_k)
 
 
 class ReciprocalRankFusionRetriever:

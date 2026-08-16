@@ -14,14 +14,17 @@ from slide2study.dense import (
 )
 from slide2study.evaluation import (
     DATASET_SPLITS,
+    QUESTION_TYPES,
     compare_page_retrievers,
     compare_retrievers,
     evaluate,
     evaluate_page_retrieval,
+    evaluate_routed_page_retrieval,
     validate_dataset,
 )
 from slide2study.fusion import (
     BM25PageRetriever,
+    ChunkPageRetriever,
     ReciprocalRankFusionChunkRetriever,
     ReciprocalRankFusionRetriever,
 )
@@ -63,6 +66,20 @@ def _parse_levels(value: str) -> set[str]:
         expected = ",".join(sorted(CHUNK_LEVELS))
         raise argparse.ArgumentTypeError(f"levels must be a comma-separated subset of: {expected}")
     return levels
+
+
+def _parse_route(value: str) -> tuple[str, str]:
+    if "=" not in value:
+        raise argparse.ArgumentTypeError("route must use QUESTION_TYPE=SYSTEM")
+    question_type, system = (part.strip() for part in value.split("=", 1))
+    if question_type not in QUESTION_TYPES:
+        expected = ",".join(sorted(QUESTION_TYPES))
+        raise argparse.ArgumentTypeError(f"route question type must be one of: {expected}")
+    systems = {"bm25_page", "dense_page", "clip_page", "dense_clip_rrf"}
+    if system not in systems:
+        expected = ",".join(sorted(systems))
+        raise argparse.ArgumentTypeError(f"route system must be one of: {expected}")
+    return question_type, system
 
 
 def _expand_paths(values: list[Path]) -> list[Path]:
@@ -174,6 +191,38 @@ def build_parser() -> argparse.ArgumentParser:
     hybrid_evaluation.add_argument("--visual-weight", type=float, default=1.0)
     hybrid_evaluation.add_argument("--split", choices=sorted(DATASET_SPLITS))
     hybrid_evaluation.add_argument("--output", type=Path)
+
+    type_aware = commands.add_parser(
+        "type-aware-evaluate",
+        help="Compare page retrievers and evaluate explicit question-type routing",
+    )
+    type_aware.add_argument("corpus", type=Path)
+    type_aware.add_argument("dataset", type=Path)
+    type_aware.add_argument("--manifests", nargs="+", type=Path, required=True)
+    type_aware.add_argument("--dense-cache", type=Path, required=True)
+    type_aware.add_argument("--visual-cache", type=Path, required=True)
+    type_aware.add_argument("--dense-model")
+    type_aware.add_argument("--visual-model")
+    type_aware.add_argument("--device")
+    type_aware.add_argument("--dense-batch-size", type=int, default=32)
+    type_aware.add_argument("--visual-batch-size", type=int, default=16)
+    type_aware.add_argument("--levels", type=_parse_levels, default={"passage"})
+    type_aware.add_argument("--top-k", type=int, default=5)
+    type_aware.add_argument("--candidate-k", type=int, default=50)
+    type_aware.add_argument("--diagnostic-k", type=int, default=10)
+    type_aware.add_argument("--rrf-k", type=int, default=60)
+    type_aware.add_argument("--dense-weight", type=float, default=1.0)
+    type_aware.add_argument("--visual-weight", type=float, default=1.0)
+    type_aware.add_argument(
+        "--route",
+        action="append",
+        type=_parse_route,
+        default=[],
+        metavar="QUESTION_TYPE=SYSTEM",
+        help="Override the default dense_page route for one question type",
+    )
+    type_aware.add_argument("--split", choices=sorted(DATASET_SPLITS))
+    type_aware.add_argument("--output", type=Path)
 
     dense_index = commands.add_parser(
         "dense-index", help="Encode text chunks once and save a verified vector cache"
@@ -502,6 +551,120 @@ def main(argv: list[str] | None = None) -> int:
             "query_diagnostics": compare_page_retrievers(
                 retrievers, evaluation_examples, args.diagnostic_k
             ),
+        }
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(
+                json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+            report["output"] = str(args.output)
+        _print_json(report, indent=2)
+        return 0
+    if args.command == "type-aware-evaluate":
+        rendered_pages = _load_rendered_pages(args.manifests)
+        visual_embeddings, cached_visual_model = load_page_embedding_cache(
+            rendered_pages, args.visual_cache, args.visual_model
+        )
+        visual_model = args.visual_model or cached_visual_model
+        visual_encoder = SentenceTransformersCLIPEncoder(
+            visual_model, args.device, args.visual_batch_size
+        )
+        clip_page = VisualPageRetriever(rendered_pages, visual_encoder, visual_embeddings)
+
+        corpus_chunks = load_chunks(args.corpus)
+        chunks = [chunk for chunk in corpus_chunks if chunk.level in args.levels]
+        dense_embeddings, dense_metadata = load_chunk_embedding_cache(
+            chunks, args.dense_cache, args.dense_model
+        )
+        dense_model = args.dense_model or dense_metadata["model"]
+        dense_encoder = SentenceTransformersTextEncoder(
+            dense_model,
+            args.device,
+            args.dense_batch_size,
+            dense_metadata["query_prefix"],
+            dense_metadata["document_prefix"],
+        )
+        dense_page = ChunkPageRetriever(
+            DenseRetriever(chunks, dense_encoder, dense_embeddings),
+            rendered_pages,
+            args.candidate_k,
+        )
+        bm25_page = BM25PageRetriever(chunks, rendered_pages, args.candidate_k)
+        dense_clip_rrf = ReciprocalRankFusionRetriever(
+            {"dense": dense_page, "clip": clip_page},
+            {"dense": args.dense_weight, "clip": args.visual_weight},
+            args.rrf_k,
+            args.candidate_k,
+        )
+        retrievers = {
+            "bm25_page": bm25_page,
+            "dense_page": dense_page,
+            "clip_page": clip_page,
+            "dense_clip_rrf": dense_clip_rrf,
+        }
+        routes = {question_type: "dense_page" for question_type in QUESTION_TYPES}
+        routes.update(dict(args.route))
+
+        examples = list(read_jsonl(args.dataset))
+        validation = validate_dataset(
+            examples,
+            require_question_types=True,
+            require_splits=True,
+            require_document_ids=True,
+            require_annotation_statuses=True,
+            chunks=corpus_chunks,
+        )
+        evaluation_examples = (
+            [example for example in examples if example.get("split") == args.split]
+            if args.split
+            else examples
+        )
+        if not evaluation_examples:
+            raise ValueError(f"The dataset has no examples in split {args.split!r}")
+        routed_metrics, route_counts = evaluate_routed_page_retrieval(
+            retrievers, routes, evaluation_examples, args.top_k
+        )
+        diagnostics = compare_page_retrievers(
+            retrievers, evaluation_examples, args.diagnostic_k
+        )
+        for diagnostic in diagnostics:
+            diagnostic["selected_system"] = routes[diagnostic["question_type"]]
+        report = {
+            "experiment": {
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "retriever": "question-type-router",
+                "dense_model": dense_model,
+                "visual_model": visual_model,
+                "top_k": args.top_k,
+                "candidate_k": args.candidate_k,
+                "diagnostic_k": args.diagnostic_k,
+                "rrf_k": args.rrf_k,
+                "dense_clip_weights": {
+                    "dense": args.dense_weight,
+                    "clip": args.visual_weight,
+                },
+                "routes": dict(sorted(routes.items())),
+                "route_counts": route_counts,
+                "levels": sorted(args.levels),
+                "split": args.split or "all",
+                "evaluated_queries": len(evaluation_examples),
+                "corpus": str(args.corpus.resolve()),
+                "manifests": [str(path.resolve()) for path in _expand_paths(args.manifests)],
+                "dense_cache": str(args.dense_cache.resolve()),
+                "visual_cache": str(args.visual_cache.resolve()),
+                "dataset": str(args.dataset.resolve()),
+            },
+            "dataset": validation.to_dict(),
+            "metrics": {
+                **{
+                    name: evaluate_page_retrieval(
+                        retriever, evaluation_examples, args.top_k
+                    ).to_dict()
+                    for name, retriever in retrievers.items()
+                },
+                "routed": routed_metrics.to_dict(),
+            },
+            "query_diagnostics": diagnostics,
         }
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)

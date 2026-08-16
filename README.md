@@ -53,6 +53,7 @@ slide2study hybrid-evaluate artifacts/course_chunks.jsonl data/private/eval.json
 slide2study dense-index artifacts/course_chunks.jsonl --output artifacts/dense_embeddings.json --levels passage
 slide2study dense-evaluate artifacts/course_chunks.jsonl data/private/eval.jsonl --cache artifacts/dense_embeddings.json --split test --top-k 5 --output artifacts/dense_report.json
 slide2study text-hybrid-evaluate artifacts/course_chunks.jsonl data/private/eval.jsonl --cache artifacts/dense_embeddings.json --bm25-weight 0.25 --dense-weight 1 --split test --output artifacts/text_hybrid_report.json
+slide2study type-aware-evaluate artifacts/course_chunks.jsonl data/private/eval.jsonl --manifests artifacts/pages/*.jsonl --dense-cache artifacts/dense_embeddings.json --visual-cache artifacts/page_embeddings.json --route text=bm25_page --route table_chart=clip_page --route visual_only=dense_clip_rrf --split dev --output artifacts/type_aware_dev.json
 slide2study dense-mine-negatives artifacts/course_chunks.jsonl data/private/eval.jsonl --cache artifacts/dense_embeddings.json --split train --top-k 20 --output artifacts/dense_triplets.jsonl
 slide2study dense-mine-negatives artifacts/course_chunks.jsonl data/private/eval.jsonl --cache artifacts/dense_embeddings.json --split train --hard-per-query 2 --medium-per-query 1 --easy-per-query 1 --output artifacts/balanced_triplets.jsonl
 slide2study build-negative-review-pack artifacts/course_chunks.jsonl artifacts/balanced_triplets.jsonl --output artifacts/negative_review/index.html
@@ -77,6 +78,9 @@ BM25 与 CLIP；同一报告包含三路指标及逐题 Top 页面、命中状�
 `text-hybrid-evaluate` 对 BM25、Dense 和加权 RRF 使用同一批 chunk，保存三路指标和逐题
 Top chunk 诊断。融合参数必须只在 dev 上选择；如果 test 未超过 Dense，应继续使用 Dense
 单路作为默认检索器。
+`type-aware-evaluate` 将 BM25 和 Dense 的 chunk 排名统一映射为页面，与 CLIP 页面排名及
+Dense+CLIP RRF 使用同一套页面指标比较。默认所有题型走 Dense，可用重复的 `--route`
+设置 `question_type=system`；报告保存完整路由、各系统分题型指标及每题实际选择的系统。
 `dense-mine-negatives` 从缓存 Dense 排名中生成 query-positive-negative triplet，并将页级
 正例映射到同文档 passage，防止层级过滤后把相关 passage 误标为负例。
 同一相关页存在多个 passage 时，以检索排名最高的相关 passage 作为代表正例，其他同页
@@ -143,6 +147,11 @@ slide2study build-review-pack artifacts/public_courseware_chunks.jsonl `
 0.967/0.806/0.836，固定权重 RRF 为 0.933/0.756/0.796。两条 table/chart 的 BM25
 Recall@5 均为 0，而 Dense 均命中。人工 test 保持不变：BM25 为 1.000/0.514/0.597，Dense
 为 1.000/0.917/0.925，RRF 为 1.000/0.833/0.887；不得根据 test 调参。
+
+只用扩充 dev 选择的页面级题型路由为：text→BM25，formula/cross-page→Dense，
+table/chart→CLIP，visual-only→Dense+CLIP RRF。相同 30 条 dev 上，页面 Dense 的
+Recall@5/MRR/nDCG@5 为 0.967/0.811/0.829，路由后为 1.000/0.833/0.855；平均延迟由
+39.8 ms 降为 31.8 ms。该规则尚未在 test 上运行，避免测试集参与选择。
 
 ## 评测集格式
 

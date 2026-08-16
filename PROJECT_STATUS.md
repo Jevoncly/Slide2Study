@@ -224,6 +224,11 @@ multimodal page retriever。
   0.967/0.806/0.836，BM25+Dense 固定权重 RRF 为 0.933/0.756/0.796；Dense 单路继续领先。
 - table/chart 两条在 BM25 下 Recall@5 为 0，在 Dense 下均命中；扩充集已能暴露原 6 条 dev
   看不到的题型差异。
+- 新增 `type-aware-evaluate`，把 BM25/Dense chunk 排名映射到页面，与 CLIP 和 Dense+CLIP
+  RRF 做统一页面级比较，并保存题型路由与逐题选择结果。
+- 仅用扩充 dev 固定路由：text→BM25，formula/cross-page→Dense，table/chart→CLIP，
+  visual-only→Dense+CLIP RRF。页面 Dense 为 0.967/0.811/0.829，门控后为
+  1.000/0.833/0.855；平均延迟从 39.8 ms 降到 31.8 ms。未运行 test，避免数据泄漏。
 - 人工复核 test：BM25 为 1.000/0.514/0.597，Dense 为 1.000/0.917/0.925，RRF 为
   1.000/0.833/0.887。正式报告明确引用 reviewed 数据；样本仅 6 条，仍不得根据 test 调权重。
 - 两个本机 Poppler 入口仍不可用；新增并实测 PyMuPDF 回退路径，7/7 份课件共 256 页均成功
@@ -241,11 +246,11 @@ multimodal page retriever。
 
 ### 4.1 自动化测试
 
-- 当前测试：42/42 通过；Ruff 检查通过。
+- 当前测试：44/44 通过；Ruff 检查通过。
 - 测试覆盖：解析、质量诊断、三层 chunk、层级校验、BM25、评测指标、hard negatives、
   页面清单、PDF/PPTX 渲染流程、向量缓存及哈希校验、视觉页面排序、页面级评测、
-  BM25 页面映射、页面/chunk 加权 RRF、逐题诊断、Dense 排序、chunk 缓存及文本哈希校验、
-  评测集校验及分类型报告。
+  通用 chunk→page 映射、页面/chunk 加权 RRF、题型路由、逐题诊断、Dense 排序、chunk 缓存
+  及文本哈希校验、评测集校验及分类型报告。
 
 运行：
 
@@ -286,9 +291,9 @@ python -m unittest discover -s tests -v
 - 当前 Torch 为 CPU 版本；真实 CLIP 可以运行，但页面首次编码速度尚未获得 GPU 加速。
 - 当前机器没有 LibreOffice；PPTX 转换路径已由自动化测试覆盖，但只对 PDF 做过真实渲染。
 - 已有四门课 28 条机器辅助候选 QA，但尚未人工复核，不能作为正式测试集或可靠消融结论。
-- BM25 + CLIP 和 BM25 + Dense RRF 均已实现；30 条扩充 dev 与首批人工 test 上，固定权重
-  RRF 都未超过 Dense 单路。新增 24 条 dev 为 AI 复核，正式对外结论前仍应做独立人工抽查；
-  人工 test 仍只有 6 条。尚未实现可靠的题型感知融合、有效的 Reranker 提升和多模态对比学习。
+- BM25 + CLIP、BM25 + Dense RRF 和 dev 校准的题型门控均已实现；全局固定权重 RRF 未超过
+  Dense，题型门控在扩充 dev 上超过 Dense。新增 24 条 dev 为 AI 复核，正式对外结论前仍应
+  做独立人工抽查；人工 test 仍只有 6 条。尚未实现有效的 Reranker 提升和多模态对比学习。
 - 尚未实现带引用答案、笔记、闪卡、题库和 UI。
 - 视觉页数量较多；后续需要通过标注集校准视觉风险阈值，而不是只依赖启发式规则。
 
@@ -322,6 +327,7 @@ slide2study hybrid-evaluate artifacts\course_chunks.jsonl data\private\eval.json
 slide2study dense-index artifacts\course_chunks.jsonl --output artifacts\dense_embeddings.json --levels passage
 slide2study dense-evaluate artifacts\course_chunks.jsonl data\private\eval.jsonl --cache artifacts\dense_embeddings.json --split test --top-k 5 --output artifacts\dense_report.json
 slide2study text-hybrid-evaluate artifacts\course_chunks.jsonl data\private\eval.jsonl --cache artifacts\dense_embeddings.json --bm25-weight 0.25 --dense-weight 1 --split test --output artifacts\text_hybrid_report.json
+slide2study type-aware-evaluate artifacts\course_chunks.jsonl data\private\eval.jsonl --manifests artifacts\pages\*.jsonl --dense-cache artifacts\dense_embeddings.json --visual-cache artifacts\page_embeddings.json --route text=bm25_page --route table_chart=clip_page --route visual_only=dense_clip_rrf --split dev --output artifacts\type_aware_dev.json
 slide2study dense-mine-negatives artifacts\course_chunks.jsonl data\private\eval.jsonl --cache artifacts\dense_embeddings.json --split train --top-k 20 --output artifacts\dense_triplets.jsonl
 slide2study dense-mine-negatives artifacts\course_chunks.jsonl data\private\eval.jsonl --cache artifacts\dense_embeddings.json --split train --hard-per-query 2 --medium-per-query 1 --easy-per-query 1 --output artifacts\balanced_triplets.jsonl
 slide2study build-negative-review-pack artifacts\course_chunks.jsonl artifacts\balanced_triplets.jsonl --output artifacts\negative_review\index.html
@@ -331,10 +337,9 @@ slide2study build-negative-review-pack artifacts\course_chunks.jsonl artifacts\b
 
 ## 7. 推荐的下一阶段
 
-1. 只用 30 条扩充 dev 验证题型感知门控，避免 CLIP 降低文本题和跨页题排序。
-2. 对新增 24 条 AI 复核 dev 做独立人工抽查，再冻结用于正式模型选择的版本。
-3. 使用复核后的 triplet 微调 Reranker，比较能否在不损害 Dense 首位命中的前提下改善困难查询。
-4. 扩充并冻结人工 test 后完成消融，再接带引用生成。
+1. 对新增 24 条 AI 复核 dev 做独立人工抽查，再冻结题型门控配置。
+2. 使用复核后的 triplet 微调 Reranker，比较能否在不损害 Dense 首位命中的前提下改善困难查询。
+3. 扩充并冻结人工 test 后完成消融，再接带引用生成。
 
 短期最重要的不是继续堆功能，而是先获得可信的评测集和 baseline 数字。
 

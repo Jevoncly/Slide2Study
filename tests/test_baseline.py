@@ -15,10 +15,12 @@ from slide2study.evaluation import (
     compare_retrievers,
     evaluate,
     evaluate_page_retrieval,
+    evaluate_routed_page_retrieval,
     validate_dataset,
 )
 from slide2study.fusion import (
     BM25PageRetriever,
+    ChunkPageRetriever,
     ReciprocalRankFusionChunkRetriever,
     ReciprocalRankFusionRetriever,
 )
@@ -609,6 +611,50 @@ class BaselineTests(unittest.TestCase):
         self.assertEqual(diagnostics[0]["systems"]["bm25"]["first_relevant_rank"], 1)
         self.assertEqual(diagnostics[0]["systems"]["hybrid"]["first_relevant_rank"], 2)
 
+    def test_question_type_router_selects_page_retrievers(self):
+        pages = [
+            RenderedPage("deck", 1, "page-1.png", "deck.pdf", 100, 80, "a"),
+            RenderedPage("deck", 2, "page-2.png", "deck.pdf", 100, 80, "b"),
+        ]
+        chunks = [
+            Chunk("chunk-1", "deck", 1, 1, "alpha", level="passage"),
+            Chunk("chunk-2", "deck", 2, 2, "beta", level="passage"),
+        ]
+        retrievers = {
+            "text": ChunkPageRetriever(StaticRetriever(chunks), pages),
+            "visual": VisualPageRetriever(pages, FakeMultimodalEncoder()),
+        }
+        summary, route_counts = evaluate_routed_page_retrieval(
+            retrievers,
+            {"text": "text", "visual_only": "visual"},
+            [
+                {
+                    "query": "alpha",
+                    "document_id": "deck",
+                    "relevant_pages": [1],
+                    "question_type": "text",
+                },
+                {
+                    "query": "diagram",
+                    "document_id": "deck",
+                    "relevant_pages": [2],
+                    "question_type": "visual_only",
+                },
+            ],
+            top_k=1,
+        )
+        self.assertEqual(summary.recall_at_k, 1.0)
+        self.assertEqual(route_counts, {"text": 1, "visual": 1})
+        with self.assertRaisesRegex(ValueError, "No route configured"):
+            evaluate_routed_page_retrieval(retrievers, {"text": "text"}, [
+                {
+                    "query": "diagram",
+                    "document_id": "deck",
+                    "relevant_pages": [2],
+                    "question_type": "visual_only",
+                }
+            ])
+
     def test_dense_retrieval_and_cache_validate_chunk_text(self):
         chunks = [
             Chunk("chunk-1", "deck", 1, 1, "alpha"),
@@ -906,6 +952,84 @@ class BaselineTests(unittest.TestCase):
             write_page_manifest([page], manifest)
             loaded = load_page_manifest(manifest)
         self.assertEqual(loaded, [page])
+
+    def test_type_aware_evaluate_cli_routes_visual_questions(self):
+        chunks = [
+            Chunk("chunk-1", "deck", 1, 1, "alpha", level="passage"),
+            Chunk("chunk-2", "deck", 2, 2, "beta", level="passage"),
+        ]
+        pages = [
+            RenderedPage("deck", 1, "page-1.png", "deck.pdf", 100, 80, "a"),
+            RenderedPage("deck", 2, "page-2.png", "deck.pdf", 100, 80, "b"),
+        ]
+        example = {
+            "id": "routed-q1",
+            "query": "diagram",
+            "document_id": "deck",
+            "relevant_pages": [2],
+            "relevant_chunk_ids": ["chunk-2"],
+            "question_type": "visual_only",
+            "split": "dev",
+            "annotation_status": "verified",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            corpus = root / "corpus.jsonl"
+            dataset = root / "dataset.jsonl"
+            manifest = root / "pages.jsonl"
+            dense_cache = root / "dense.json"
+            visual_cache = root / "visual.json"
+            report_path = root / "report.json"
+            write_jsonl((chunk.to_dict() for chunk in chunks), corpus)
+            write_jsonl([example], dataset)
+            write_page_manifest(pages, manifest)
+            write_chunk_embedding_cache(
+                chunks,
+                [[1.0, 0.0], [0.0, 1.0]],
+                dense_cache,
+                "fake-dense",
+                "query: ",
+                "passage: ",
+            )
+            write_page_embedding_cache(
+                pages, [[1.0, 0.0], [0.0, 1.0]], visual_cache, "fake-clip"
+            )
+            with (
+                patch("slide2study.cli.SentenceTransformersTextEncoder", FakeTextEncoder),
+                patch(
+                    "slide2study.cli.SentenceTransformersCLIPEncoder",
+                    FakeMultimodalEncoder,
+                ),
+                redirect_stdout(io.StringIO()),
+            ):
+                result = cli_main(
+                    [
+                        "type-aware-evaluate",
+                        str(corpus),
+                        str(dataset),
+                        "--manifests",
+                        str(manifest),
+                        "--dense-cache",
+                        str(dense_cache),
+                        "--visual-cache",
+                        str(visual_cache),
+                        "--route",
+                        "visual_only=clip_page",
+                        "--split",
+                        "dev",
+                        "--top-k",
+                        "1",
+                        "--diagnostic-k",
+                        "1",
+                        "--output",
+                        str(report_path),
+                    ]
+                )
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+        self.assertEqual(result, 0)
+        self.assertEqual(report["experiment"]["route_counts"], {"clip_page": 1})
+        self.assertEqual(report["metrics"]["routed"]["recall_at_k"], 1.0)
+        self.assertEqual(report["query_diagnostics"][0]["selected_system"], "clip_page")
 
     def test_review_pack_copies_evidence_and_builds_export_ui(self):
         page_chunk = next(chunk for chunk in self.chunks if chunk.level == "page")
