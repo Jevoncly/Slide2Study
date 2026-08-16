@@ -213,10 +213,10 @@ multimodal page retriever。
 - 现有 `ingest-corpus` 已实测导入全部 22 份 PDF：328 页、935 个 chunk、失败 0。
 - 原始文件、OpenDSA 稀疏源码和解析产物位于被 Git 忽略的 `data/raw/`、`artifacts/`；公开
   仓库只保留清单、下载脚本和许可说明。
-- 已建立 54 条公开检索记录：原 30 条由人工复核，新增 24 条 dev 由 Codex 逐条检查文本证据，
-  并逐页检查所有新增视觉题；`reviewer_type` 区分 30 条 `human` 与 24 条 `ai`。
-- train/dev/test 为 18/30/6，text/formula/cross-page/table-chart/visual-only 为 25/14/8/2/5；
-  54/54 条均为 `verified`，严格数据校验通过。正式文件为
+- 已建立 66 条公开检索记录：原 54 条及新增 12 条 test 均已完成人工确认；所有记录的
+  `reviewer_type` 均为 `human`。
+- train/dev/test 为 18/30/18，text/formula/cross-page/table-chart/visual-only 为 25/14/12/6/9；
+  66/66 条均为 `verified`，严格数据校验通过。正式文件为
   `data/public_course_eval_reviewed.jsonl`。
 - 评测语料已收紧为 7 份纯课件、256 页、566 个层级 chunk（253 个 passage）；复习资料只用作
   问题来源，不参与检索，避免 discussion 或答案文件泄漏。
@@ -297,17 +297,31 @@ multimodal page retriever。
 - 退化集中在唯一 cross-page 测试题 `public-mdp-009`：首个相关结果由第 1 名降至第 2 名；
   formula、text、visual-only 的 test MRR 未改变。由于 test 仅 6 条，不据此调整任何参数。
 
-### 3.21 人工 test 扩充候选
+### 3.21 人工 test 扩充
 
 - 新增可复现脚本 `scripts/build_public_test_expansion.py`，只从现有 54 条未使用的课件证据页
   构建候选，并检查 ID、页面存在性、单文档范围及证据页不重叠。
-- 当前扩充候选 12 条：cross-page 4、table/chart 4、visual-only 4，全部为 `candidate`，尚未
-  进入正式 test，也未用于任何模型或参数选择。
+- 扩充候选共 12 条：cross-page 4、table/chart 4、visual-only 4；用户已确认 12/12 条正确，
+  现已作为 `human + verified` 合并进入正式 test。
 - 已逐页检查 17 个证据页图像；本地审阅包
   `artifacts/test_expansion_human_review/index.html` 包含 12 条、17 张图片，缺图 0，初始状态
   为 0/12。
-- 候选文件为 `data/public_course_test_expansion_candidates.jsonl`；只有人工确认后才与正式
-  reviewed 数据合并，并重新运行一次冻结消融。
+- 候选文件 `data/public_course_test_expansion_candidates.jsonl` 保留为审阅前审计记录；正式来源
+  是 `data/public_course_eval_reviewed.jsonl`。统一生成脚本可精确重建 66 条记录且不会丢失
+  人工状态。
+
+### 3.22 扩充后冻结测试结果
+
+- 按事先冻结的配置只运行一次 18 条 test：Dense Recall@5/MRR/nDCG@5 为
+  0.833/0.704/0.720，平均延迟 56.8 ms；mMARCO Reranker（candidate-k=5）为
+  0.833/0.704/0.719，平均延迟 241.1 ms。
+- Reranker 没有改善 Recall@5 或 MRR，nDCG@5 略降 0.001，平均延迟约为 Dense 的 4.2 倍；
+  扩大样本后仍不支持将其设为默认检索器。
+- Dense 未召回的 3 条为 `public-mdp-019`（table/chart）、`public-mdp-020`（visual-only）和
+  `public-mdp-022`（table/chart）。由于 Reranker 只能重排 Dense Top-5，它无法恢复未进入
+  候选集的证据；当前主要瓶颈是图表/视觉页的候选召回，而不是候选排序。
+- 以上 test 结果只用于最终报告，不据此调整模型、路由或 candidate-k。后续改进必须在
+  train/dev 建立并冻结后，才能再用新的独立 test 验证。
 
 ## 4. 验证证据
 
@@ -405,11 +419,11 @@ slide2study build-negative-review-pack artifacts\course_chunks.jsonl artifacts\b
 
 ## 7. 推荐的下一阶段
 
-1. 扩充并冻结人工 test，尤其补足 cross-page、table/chart 和 visual-only，避免依据当前 6 条
-   小样本下结论。
-2. 保持 Dense 为默认检索器，将 Reranker 记录为“dev 提升、test 未复现”的失败消融；不得围绕
-   当前 test 调模型或 candidate-k。
-3. 在更大人工 test 上完成最终消融后，再接带引用生成。
+1. 保持 Dense 为默认检索器，将 Reranker 记录为“dev 提升、扩充 test 未复现”的失败消融；
+   不得围绕当前 test 调模型或 candidate-k。
+2. 下一轮只在 train/dev 改善视觉候选召回：扩充 table/chart 与 visual-only 的开发样本，比较
+   已有 CLIP、Dense+CLIP 和题型路由，并先冻结方案。
+3. 为下一轮改进另建未查看的独立 test；验证通过后再接带引用生成。
 
 短期最重要的不是继续堆功能，而是先获得可信的评测集和 baseline 数字。
 

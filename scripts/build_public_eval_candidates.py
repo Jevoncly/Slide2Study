@@ -4,6 +4,8 @@ import argparse
 import json
 from pathlib import Path
 
+from build_public_test_expansion import CANDIDATES as TEST_EXPANSION_CANDIDATES
+
 CANDIDATES = [
     {
         "id": "public-dp-001",
@@ -549,10 +551,17 @@ CANDIDATES = [
     },
 ]
 
+CANDIDATES.extend(TEST_EXPANSION_CANDIDATES)
+TEST_EXPANSION_IDS = {candidate["id"] for candidate in TEST_EXPANSION_CANDIDATES}
+
 HUMAN_REVIEWED_IDS = {
     f"public-{topic}-{index:03d}"
     for topic in ("dp", "search", "mdp")
     for index in range(1, 19)
+} | {
+    f"public-search-{index:03d}" for index in range(19, 23)
+} | {
+    f"public-mdp-{index:03d}" for index in range(19, 27)
 }
 
 
@@ -592,13 +601,15 @@ def main() -> int:
             "relevant_pages": pages,
             "relevant_chunk_ids": [chunk["chunk_id"] for chunk in selected],
             "question_type": candidate["question_type"],
-            "split": candidate["split"],
+            "split": candidate.get("split", "test"),
             "annotation_status": "verified" if args.reviewed else "candidate",
             "answer_hint": candidate["answer_hint"],
             "pair_id": candidate["id"].split("-")[1],
             "courseware_source": candidate["source_name"],
             "review_sources": candidate["review_sources"],
         }
+        if candidate["id"] in TEST_EXPANSION_IDS:
+            record["expansion_round"] = "test-expansion-v1"
         if args.reviewed:
             record["review_decision"] = "verified"
             record["reviewer_type"] = "human" if candidate["id"] in HUMAN_REVIEWED_IDS else "ai"
