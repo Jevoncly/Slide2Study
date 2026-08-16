@@ -65,6 +65,26 @@ class FormulaEvidence:
 
 
 @dataclass(frozen=True, slots=True)
+class StudyQuestion:
+    level: str
+    question_type: str
+    prompt: str
+    answer: str
+    evidence_text: str
+    citation: EvidenceCitation
+
+    def to_dict(self) -> dict[str, object]:
+        return {
+            "level": self.level,
+            "question_type": self.question_type,
+            "prompt": self.prompt,
+            "answer": self.answer,
+            "evidence_text": self.evidence_text,
+            "citation": self.citation.to_dict(),
+        }
+
+
+@dataclass(frozen=True, slots=True)
 class ChapterStudyGuide:
     document_id: str
     section: str
@@ -72,6 +92,7 @@ class ChapterStudyGuide:
     flashcards: tuple[Flashcard, ...]
     concepts: tuple[KeyConcept, ...]
     formulas: tuple[FormulaEvidence, ...]
+    questions: tuple[StudyQuestion, ...]
     source_chunk_ids: tuple[str, ...]
 
     def to_dict(self) -> dict[str, object]:
@@ -82,11 +103,18 @@ class ChapterStudyGuide:
             "flashcards": [item.to_dict() for item in self.flashcards],
             "concepts": [item.to_dict() for item in self.concepts],
             "formulas": [item.to_dict() for item in self.formulas],
+            "questions": [item.to_dict() for item in self.questions],
             "source_chunk_ids": list(self.source_chunk_ids),
             "cited_pages": sorted(
                 {
                     page
-                    for item in (*self.summary, *self.flashcards, *self.concepts, *self.formulas)
+                    for item in (
+                        *self.summary,
+                        *self.flashcards,
+                        *self.concepts,
+                        *self.formulas,
+                        *self.questions,
+                    )
                     for page in range(
                         item.citation.page_start,
                         item.citation.page_end + 1,
@@ -113,12 +141,13 @@ def build_chapter_study_guide(
     flashcard_count: int = 5,
     concept_count: int = 5,
     formula_count: int = 5,
+    question_count: int = 5,
 ) -> ChapterStudyGuide:
     """Create an exact-extractive chapter summary and definition flashcards."""
     if summary_bullets <= 0 or flashcard_count <= 0:
         raise ValueError("summary_bullets and flashcard_count must be positive")
-    if concept_count < 0 or formula_count < 0:
-        raise ValueError("concept_count and formula_count cannot be negative")
+    if concept_count < 0 or formula_count < 0 or question_count < 0:
+        raise ValueError("concept_count, formula_count, and question_count cannot be negative")
 
     all_chunks = chunks
     passages = [chunk for chunk in all_chunks if chunk.level == "passage" and chunk.text.strip()]
@@ -222,6 +251,20 @@ def build_chapter_study_guide(
             _formula_evidence(evidence_chunks)[:formula_count], 1
         )
     )
+    questions = tuple(
+        StudyQuestion(
+            level="basic",
+            question_type="short_answer",
+            prompt=f"What does “{term}” mean?",
+            answer=card.back,
+            evidence_text=card.evidence_text,
+            citation=_citation(item.chunk, f"Q{index}"),
+        )
+        for index, (card, (term, item)) in enumerate(
+            zip(flashcards[:question_count], concept_candidates[:question_count]),
+            1,
+        )
+    )
 
     return ChapterStudyGuide(
         document_id=document_id,
@@ -230,10 +273,12 @@ def build_chapter_study_guide(
         flashcards=tuple(flashcards),
         concepts=concepts,
         formulas=formulas,
+        questions=questions,
         source_chunk_ids=tuple(
             dict.fromkeys(
                 [item.chunk.chunk_id for item in candidates]
                 + [item.citation.chunk_id for item in formulas]
+                + [item.citation.chunk_id for item in questions]
             )
         ),
     )
@@ -248,6 +293,7 @@ def build_course_study_guides(
     flashcard_count: int = 5,
     concept_count: int = 5,
     formula_count: int = 5,
+    question_count: int = 5,
 ) -> tuple[ChapterStudyGuide, ...]:
     """Build every viable section in document and page order."""
     passages = [chunk for chunk in chunks if chunk.level == "passage" and chunk.text.strip()]
@@ -275,6 +321,7 @@ def build_course_study_guides(
                     flashcard_count=flashcard_count,
                     concept_count=concept_count,
                     formula_count=formula_count,
+                    question_count=question_count,
                 )
             )
         except ValueError as exc:

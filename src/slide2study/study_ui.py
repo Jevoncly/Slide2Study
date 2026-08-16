@@ -68,7 +68,13 @@ def build_course_study_ui(
 def _source_name(guide: ChapterStudyGuide) -> str:
     citations = [
         item.citation
-        for item in (*guide.summary, *guide.flashcards, *guide.concepts, *guide.formulas)
+        for item in (
+            *guide.summary,
+            *guide.flashcards,
+            *guide.concepts,
+            *guide.formulas,
+            *guide.questions,
+        )
     ]
     return citations[0].source_name if citations else guide.document_id
 
@@ -117,7 +123,7 @@ _HTML = """<!doctype html>
     .field select { width: 100%; border: 1px solid var(--line); border-radius: 11px; padding: 10px 12px; color: var(--ink); background: white; font: inherit; }
     .workspace { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(380px, .95fr); gap: 22px; align-items: start; }
     .panel { background: rgba(255,253,248,.93); border: 1px solid var(--line); border-radius: 22px; box-shadow: var(--shadow); overflow: hidden; }
-    .tabs { display: flex; gap: 4px; padding: 10px; border-bottom: 1px solid var(--line); background: rgba(236,231,219,.55); }
+    .tabs { display: flex; flex-wrap: wrap; gap: 4px; padding: 10px; border-bottom: 1px solid var(--line); background: rgba(236,231,219,.55); }
     .tab { border: 0; border-radius: 12px; padding: 10px 16px; color: var(--muted); background: transparent; cursor: pointer; font-weight: 750; }
     .tab[aria-selected="true"] { color: white; background: var(--ink); }
     .view { display: none; padding: 22px; }
@@ -136,6 +142,9 @@ _HTML = """<!doctype html>
     .formula-card { padding: 18px; margin-bottom: 12px; border: 1px solid var(--line); border-left: 4px solid var(--green); border-radius: 14px; background: var(--panel); }
     .formula-text { margin-bottom: 11px; font: 650 18px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
     .formula-explanation { margin: 0 0 10px; color: #34443e; }
+    .question-card { padding: 17px; margin-bottom: 12px; border: 1px solid var(--line); border-radius: 15px; background: var(--panel); }
+    .question-card summary { cursor: pointer; font-weight: 800; }
+    .question-answer { margin: 12px 0; color: #34443e; }
     .symbols { margin-bottom: 10px; color: var(--muted); font-size: 13px; }
     .citation { border: 0; padding: 0; color: var(--accent-dark); background: transparent; cursor: pointer; font-size: 13px; font-weight: 800; text-decoration: underline; text-underline-offset: 3px; }
     .flash-stage { min-height: 390px; display: grid; align-content: center; }
@@ -196,6 +205,7 @@ _HTML = """<!doctype html>
           <button class="tab" data-tab="summary" aria-selected="true">章节摘要</button>
           <button class="tab" data-tab="concepts" aria-selected="false">重点概念</button>
           <button class="tab" data-tab="formulas" aria-selected="false">公式/参数</button>
+          <button class="tab" data-tab="questions" aria-selected="false">基础题</button>
           <button class="tab" data-tab="flashcards" aria-selected="false">闪卡练习</button>
         </nav>
         <div class="view active" id="summary-view">
@@ -209,6 +219,10 @@ _HTML = """<!doctype html>
         <div class="view" id="formulas-view">
           <div class="section-head"><h2>公式与参数证据</h2><span class="count" id="formula-count"></span></div>
           <div id="formula-list"></div>
+        </div>
+        <div class="view" id="questions-view">
+          <div class="section-head"><h2>基础简答题</h2><span class="count" id="question-count"></span></div>
+          <div id="question-list"></div>
         </div>
         <div class="view" id="flashcards-view">
           <div class="section-head"><h2>主动回忆</h2><span class="count" id="flash-progress"></span></div>
@@ -307,6 +321,24 @@ _HTML = """<!doctype html>
       document.getElementById('formula-count').textContent = `${model.formulas.length} 条`;
     }
 
+    function renderQuestions() {
+      const list = document.getElementById('question-list');
+      list.replaceChildren();
+      model.questions.forEach(item => {
+        const card = document.createElement('details');
+        card.className = 'question-card';
+        const prompt = document.createElement('summary');
+        prompt.textContent = item.prompt;
+        const answer = document.createElement('p');
+        answer.className = 'question-answer';
+        answer.textContent = item.answer;
+        card.append(prompt, answer, citationButton(item.citation));
+        list.append(card);
+      });
+      if (!model.questions.length) list.innerHTML = '<div class="empty">本章节没有达到质量门槛的基础题。</div>';
+      document.getElementById('question-count').textContent = `${model.questions.length} 题`;
+    }
+
     function renderFlashcard() {
       const stage = document.getElementById('flash-stage');
       stage.replaceChildren();
@@ -371,6 +403,7 @@ _HTML = """<!doctype html>
       renderSummary();
       renderConcepts();
       renderFormulas();
+      renderQuestions();
       renderFlashcard();
       renderPageStrip();
       showPage(pages[0]);

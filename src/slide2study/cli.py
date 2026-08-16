@@ -324,6 +324,7 @@ def build_parser() -> argparse.ArgumentParser:
     study_guide.add_argument("--flashcards", type=int, default=5)
     study_guide.add_argument("--concepts", type=int, default=5)
     study_guide.add_argument("--formulas", type=int, default=5)
+    study_guide.add_argument("--questions", type=int, default=5)
     study_guide.add_argument("--output", type=Path)
 
     study_ui = commands.add_parser(
@@ -337,6 +338,7 @@ def build_parser() -> argparse.ArgumentParser:
     study_ui.add_argument("--flashcards", type=int, default=5)
     study_ui.add_argument("--concepts", type=int, default=5)
     study_ui.add_argument("--formulas", type=int, default=5)
+    study_ui.add_argument("--questions", type=int, default=5)
     study_ui.add_argument("--output-dir", type=Path, required=True)
 
     study_review = commands.add_parser(
@@ -349,6 +351,7 @@ def build_parser() -> argparse.ArgumentParser:
     study_review.add_argument("--flashcards", type=int, default=4)
     study_review.add_argument("--concepts", type=int, default=4)
     study_review.add_argument("--formulas", type=int, default=4)
+    study_review.add_argument("--questions", type=int, default=4)
     study_review.add_argument("--output-dir", type=Path, required=True)
 
     evaluation = commands.add_parser("evaluate", help="Evaluate BM25 on a JSONL QA set")
@@ -1220,6 +1223,7 @@ def main(argv: list[str] | None = None) -> int:
             flashcard_count=args.flashcards,
             concept_count=args.concepts,
             formula_count=args.formulas,
+            question_count=args.questions,
         )
         report = {
             **guide.to_dict(),
@@ -1244,6 +1248,7 @@ def main(argv: list[str] | None = None) -> int:
             flashcard_count=args.flashcards,
             concept_count=args.concepts,
             formula_count=args.formulas,
+            question_count=args.questions,
         )
         rendered_pages = [
             page
@@ -1260,6 +1265,7 @@ def main(argv: list[str] | None = None) -> int:
                 "concepts": sum(len(guide.concepts) for guide in guides),
                 "formulas": sum(len(guide.formulas) for guide in guides),
                 "flashcards": sum(len(guide.flashcards) for guide in guides),
+                "questions": sum(len(guide.questions) for guide in guides),
                 "cited_pages": len(
                     {
                         (guide.document_id, page)
@@ -1281,6 +1287,7 @@ def main(argv: list[str] | None = None) -> int:
             flashcard_count=args.flashcards,
             concept_count=args.concepts,
             formula_count=args.formulas,
+            question_count=args.questions,
         )
         guides = stratified_section_sample(all_guides, args.sample_size)
         rendered_pages = [

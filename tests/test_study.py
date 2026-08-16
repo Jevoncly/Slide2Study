@@ -60,6 +60,29 @@ class OfflineStudyGuideTests(unittest.TestCase):
             self.assertIn(card.back.casefold(), card.evidence_text.casefold())
             self.assertTrue(card.front.startswith("What is "))
             self.assertEqual(card.citation.source_name, "Lecture 3.pdf")
+        self.assertEqual(len(guide.questions), 2)
+        self.assertTrue(all(item.level == "basic" for item in guide.questions))
+        self.assertTrue(
+            all(item.answer.casefold() in item.evidence_text.casefold() for item in guide.questions)
+        )
+
+    def test_basic_question_count_is_explicit_and_grounded(self):
+        chunks = [
+            passage("c1", 3, "Validation data: evidence used to select model hyperparameters."),
+            passage("c2", 4, "Test data: evidence used for final generalization estimates."),
+        ]
+
+        guide = build_chapter_study_guide(
+            chunks,
+            summary_bullets=2,
+            flashcard_count=2,
+            question_count=1,
+        )
+
+        self.assertEqual(len(guide.questions), 1)
+        self.assertEqual(guide.questions[0].question_type, "short_answer")
+        self.assertEqual(guide.questions[0].prompt, "What does “Validation data” mean?")
+        self.assertEqual(guide.questions[0].citation.page_start, 3)
 
     def test_multiple_sections_require_an_explicit_selection(self):
         chunks = [
