@@ -283,6 +283,19 @@ multimodal page retriever。
 - 本地专项包 `artifacts/ai_dev_human_review/index.html` 包含 24 条 AI-dev、32 个证据页和
   32 张页面图片，缺图 0；train/test 记录均为 0，初始状态为 0/24。
 - 专项包及导出结果均位于 Git 忽略的 `artifacts/`，不会公开课件内容或未冻结标注。
+- 用户已确认专项包 24/24 条均正确；正式评测集现为 train 18、dev 30、test 6，全部
+  `annotation_status=verified` 且 `reviewer_type=human`。生成脚本的人工确认集合已同步更新，
+  重新构建不会把这 24 条退回 AI 状态。
+
+### 3.20 冻结 Reranker 测试结果
+
+- 人工确认后的 dev 复跑与冻结前一致：Recall@5 0.967、MRR 0.908、nDCG@5 0.893。
+- 冻结配置 `mmarco-mMiniLMv2-L12-H384-v1`、candidate-k=5 在 6 条人工 test 上只运行一次；
+  Reranker 为 Recall@5 1.000、MRR 0.833、nDCG@5 0.880、平均延迟 239.1 ms。
+- 同一 test 的 Dense 为 Recall@5 1.000、MRR 0.917、nDCG@5 0.925、平均延迟 39.2 ms；
+  Reranker 未在 test 稳定超过 Dense，不能设为默认检索器。
+- 退化集中在唯一 cross-page 测试题 `public-mdp-009`：首个相关结果由第 1 名降至第 2 名；
+  formula、text、visual-only 的 test MRR 未改变。由于 test 仅 6 条，不据此调整任何参数。
 
 ## 4. 验证证据
 
@@ -380,10 +393,11 @@ slide2study build-negative-review-pack artifacts\course_chunks.jsonl artifacts\b
 
 ## 7. 推荐的下一阶段
 
-1. 对新增 24 条 AI 复核 dev 做独立人工抽查，再冻结题型门控配置。
-2. 对冻结的预训练 Reranker（candidate-k=5）在人工抽查后的 dev 重新确认；若结论不变，再
-   对人工 test 运行一次，不根据 test 调整模型或候选深度。
-3. 扩充并冻结人工 test 后完成消融，再接带引用生成。
+1. 扩充并冻结人工 test，尤其补足 cross-page、table/chart 和 visual-only，避免依据当前 6 条
+   小样本下结论。
+2. 保持 Dense 为默认检索器，将 Reranker 记录为“dev 提升、test 未复现”的失败消融；不得围绕
+   当前 test 调模型或 candidate-k。
+3. 在更大人工 test 上完成最终消融后，再接带引用生成。
 
 短期最重要的不是继续堆功能，而是先获得可信的评测集和 baseline 数字。
 

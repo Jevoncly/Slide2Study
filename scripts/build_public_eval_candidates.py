@@ -552,7 +552,7 @@ CANDIDATES = [
 HUMAN_REVIEWED_IDS = {
     f"public-{topic}-{index:03d}"
     for topic in ("dp", "search", "mdp")
-    for index in range(1, 11)
+    for index in range(1, 19)
 }
 
 
