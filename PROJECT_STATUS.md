@@ -373,14 +373,28 @@ multimodal page retriever。
   选择、统一 `[source, p.N]` 引用及 JSON 输出。
 - 对空证据、无实质词项重合、无引用输出和引用未知证据 ID 均安全拒答；拒答结果不携带引用。
 - 真实中文样例“λ 有什么作用？”返回正则化证据及第 2 页引用；无关的量子引力问题明确拒答。
-- 新增 5 项生成测试，覆盖正常引用、空证据拒答、未知证据 ID、正文伪造页码引用阻断和命令行
-  端到端闭环。
+- 现有 10 项生成及评测测试覆盖正常引用、空证据拒答、弱词项拒答、未知证据 ID、正文伪造页码
+  引用阻断、OpenAI 结构化请求、异常输出和命令行端到端闭环。
+
+### 3.27 可配置 LLM 后端与生成评测
+
+- 新增 OpenAI Responses API 可选后端，使用结构化 JSON Schema 输出答案正文和证据 ID；Schema
+  的证据 ID 枚举由本次检索结果动态生成，证据文本被明确视为不可信内容，页码继续由本地构造。
+- 默认仍使用免费、离线的 extractive 后端；只有显式传入 `--backend openai` 才会调用 API，
+  默认模型为 `gpt-5-mini`，通过可选 `generation` 依赖安装 SDK。
+- 新增 `generation-evaluate`，统计拒答准确率、引用有效率、引用准确率、引用覆盖率并输出逐题诊断。
+- 15 条独立 answerable holdout 的 extractive+BM25 初始结果：13 条作答，引用有效率 1.000、
+  引用准确率 0.692、引用覆盖率 0.600；说明引用安全成立，但 BM25 证据覆盖不足。
+- 新增 6 条明确课外的 synthetic refusal 集。收紧实质词匹配并过滤英文停用词后，拒答准确率
+  从 0.167 提升到 1.000；同一 answerable holdout 的引用覆盖率保持 0.600，没有以拒答换取虚假提升。
+- OpenAI 请求通过模拟 Responses 客户端验证，未发起付费 API 调用；真实模型的 faithfulness、
+  完整性、延迟和成本仍待获得用户 API key 后评测。
 
 ## 4. 验证证据
 
 ### 4.1 自动化测试
 
-- 当前测试：53/53 通过；Ruff 检查通过。
+- 当前测试：58/58 通过；Ruff 检查通过。
 - 测试覆盖：解析、质量诊断、三层 chunk、层级校验、BM25、评测指标、hard negatives、
   页面清单、PDF/PPTX 渲染流程、向量缓存及哈希校验、视觉页面排序、页面级评测、
   通用 chunk→page 映射、页面/chunk 加权 RRF、题型路由、逐题诊断、Dense 排序、chunk 缓存
@@ -429,8 +443,8 @@ python -m unittest discover -s tests -v
   Dense，题型门控在扩充 dev 上超过 Dense。新增 24 条 dev 为 AI 复核，正式对外结论前仍应
   做独立人工抽查；人工 test 仍只有 6 条。检索预训练 Reranker 已在 dev 显著提升排序质量，
   但尚未经过冻结 test 验证；多模态对比学习仍未实现。
-- 已实现离线 extractive 带引用答案基线；尚未接入 LLM，笔记、闪卡、题库、可点击引用和 UI
-  仍未实现。
+- 已实现离线 extractive 基线、可选 OpenAI LLM 后端和结构化生成评测；尚未运行真实付费模型，
+  笔记、闪卡、题库、可点击引用和 UI 仍未实现。
 - 视觉页数量较多；后续需要通过标注集校准视觉风险阈值，而不是只依赖启发式规则。
 
 ## 6. 安装与运行
@@ -476,8 +490,8 @@ slide2study build-negative-review-pack artifacts\course_chunks.jsonl artifacts\b
 1. 保持 Dense 为默认检索器，将 Reranker 记录为“dev 提升、扩充 test 未复现”的失败消融；
    不得围绕当前 test 调模型或 candidate-k。
 2. 题型路由已经在 42 条 dev 上冻结；不得再用现有 18 条已查看 test 验证或调参。
-3. 独立 holdout 和带引用答案最小闭环已经完成；下一步接入可配置 LLM 后端并建立生成质量评测，
-   不允许绕过现有引用白名单和拒答机制。
+3. 将冻结题型路由的页面结果映射为生成证据，再用小规模人工集运行 OpenAI 后端，补齐
+   faithfulness、答案完整性、延迟和成本评测；不允许绕过现有引用白名单和拒答机制。
 
 短期最重要的不是继续堆功能，而是先获得可信的评测集和 baseline 数字。
 

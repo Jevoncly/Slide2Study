@@ -1,0 +1,6 @@
+{"id":"refusal-001","query":"How long should sourdough bread bake at 230 degrees Celsius?","answerable":false,"split":"test","annotation_status":"synthetic"}
+{"id":"refusal-002","query":"What dosage of amoxicillin should an adult take for sinusitis?","answerable":false,"split":"test","annotation_status":"synthetic"}
+{"id":"refusal-003","query":"Who composed the opera The Magic Flute?","answerable":false,"split":"test","annotation_status":"synthetic"}
+{"id":"refusal-004","query":"How do I replace a leaking ceramic tap cartridge?","answerable":false,"split":"test","annotation_status":"synthetic"}
+{"id":"refusal-005","query":"Which ingredients are needed for a classic tiramisu?","answerable":false,"split":"test","annotation_status":"synthetic"}
+{"id":"refusal-006","query":"What is the recommended tyre pressure for a road bicycle?","answerable":false,"split":"test","annotation_status":"synthetic"}

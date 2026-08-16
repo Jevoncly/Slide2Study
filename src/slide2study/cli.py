@@ -28,7 +28,8 @@ from slide2study.fusion import (
     ReciprocalRankFusionChunkRetriever,
     ReciprocalRankFusionRetriever,
 )
-from slide2study.generation import GroundedAnswerGenerator
+from slide2study.generation import GroundedAnswerGenerator, OpenAIAnswerBackend
+from slide2study.generation_evaluation import evaluate_generation
 from slide2study.io import load_chunks, read_jsonl, write_jsonl
 from slide2study.negative_review import apply_negative_reviews, build_negative_review_pack
 from slide2study.parsing import build_parse_report, get_parser
@@ -284,7 +285,24 @@ def build_parser() -> argparse.ArgumentParser:
     answer.add_argument("query")
     answer.add_argument("--top-k", type=int, default=5)
     answer.add_argument("--levels", type=_parse_levels, default={"passage"})
+    answer.add_argument("--backend", choices=("extractive", "openai"), default="extractive")
+    answer.add_argument("--model", default="gpt-5-mini")
+    answer.add_argument("--max-output-tokens", type=int, default=500)
     answer.add_argument("--output", type=Path)
+
+    generation_evaluation = commands.add_parser(
+        "generation-evaluate", help="Evaluate refusals and citation grounding"
+    )
+    generation_evaluation.add_argument("corpus", type=Path)
+    generation_evaluation.add_argument("dataset", type=Path)
+    generation_evaluation.add_argument(
+        "--backend", choices=("extractive", "openai"), default="extractive"
+    )
+    generation_evaluation.add_argument("--model", default="gpt-5-mini")
+    generation_evaluation.add_argument("--max-output-tokens", type=int, default=500)
+    generation_evaluation.add_argument("--top-k", type=int, default=5)
+    generation_evaluation.add_argument("--levels", type=_parse_levels, default={"passage"})
+    generation_evaluation.add_argument("--output", type=Path)
 
     evaluation = commands.add_parser("evaluate", help="Evaluate BM25 on a JSONL QA set")
     evaluation.add_argument("corpus", type=Path)
@@ -1154,12 +1172,51 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "answer":
         evidence = retriever.search(args.query, args.top_k)
-        material = GroundedAnswerGenerator().generate(args.query, evidence)
+        backend = (
+            OpenAIAnswerBackend(args.model, max_output_tokens=args.max_output_tokens)
+            if args.backend == "openai"
+            else None
+        )
+        material = GroundedAnswerGenerator(backend).generate(args.query, evidence)
         report = {
             **material.to_dict(),
             "query": args.query,
             "retriever": "bm25",
+            "backend": args.backend,
+            "model": args.model if args.backend == "openai" else None,
             "retrieved_chunk_ids": [result.chunk.chunk_id for result in evidence],
+        }
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(
+                json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+            report["output"] = str(args.output)
+        _print_json(report, indent=2)
+        return 0
+    if args.command == "generation-evaluate":
+        backend = (
+            OpenAIAnswerBackend(args.model, max_output_tokens=args.max_output_tokens)
+            if args.backend == "openai"
+            else None
+        )
+        metrics, diagnostics = evaluate_generation(
+            GroundedAnswerGenerator(backend),
+            retriever,
+            list(read_jsonl(args.dataset)),
+            args.top_k,
+        )
+        report = {
+            "experiment": {
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "retriever": "bm25",
+                "backend": args.backend,
+                "model": args.model if args.backend == "openai" else None,
+                "top_k": args.top_k,
+                "dataset": str(args.dataset.resolve()),
+            },
+            "metrics": metrics.to_dict(),
+            "diagnostics": diagnostics,
         }
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)
