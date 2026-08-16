@@ -31,34 +31,77 @@ class AnswerBackend(Protocol):
 
 
 class ExtractiveAnswerBackend:
-    """Dependency-free grounded baseline that selects the best evidence sentence."""
+    """Dependency-free baseline that selects complementary evidence sentences."""
+
+    def __init__(self, max_sentences: int = 1):
+        if max_sentences <= 0:
+            raise ValueError("max_sentences must be positive")
+        self.max_sentences = max_sentences
 
     def generate(self, query: str, evidence: list[GroundedEvidence]) -> GeneratedDraft:
-        query_terms = set(_tokens(query))
-        candidates: list[tuple[int, bool, int, int, str, str]] = []
+        query_terms = set(meaningful_tokens(query))
+        candidates: list[tuple[int, int, int, str, str, frozenset[str]]] = []
         for evidence_index, item in enumerate(evidence):
             for sentence_index, sentence in enumerate(_sentences(item.text)):
-                sentence_terms = set(_tokens(sentence))
+                sentence_terms = set(meaningful_tokens(sentence))
                 overlap_terms = query_terms & sentence_terms
                 symbolic_support = any(
                     re.fullmatch(r"[\u0370-\u03ff]+", term) for term in overlap_terms
                 )
-                candidates.append(
-                    (
-                        -len(overlap_terms),
-                        not symbolic_support,
-                        evidence_index,
-                        sentence_index,
-                        sentence,
-                        item.evidence_id,
+                if len(overlap_terms) >= 2 or symbolic_support:
+                    candidates.append(
+                        (
+                            -len(overlap_terms),
+                            evidence_index,
+                            sentence_index,
+                            sentence,
+                            item.evidence_id,
+                            frozenset(overlap_terms),
+                        )
                     )
+        if not candidates:
+            for evidence_index, item in enumerate(evidence):
+                sentence = re.sub(r"\s+", " ", item.text).strip()
+                overlap_terms = query_terms & set(meaningful_tokens(sentence))
+                symbolic_support = any(
+                    re.fullmatch(r"[\u0370-\u03ff]+", term) for term in overlap_terms
                 )
+                if len(overlap_terms) >= 2 or symbolic_support:
+                    candidates.append(
+                        (
+                            -len(overlap_terms),
+                            evidence_index,
+                            0,
+                            sentence,
+                            item.evidence_id,
+                            frozenset(overlap_terms),
+                        )
+                    )
         if not candidates:
             return GeneratedDraft("", ())
-        negative_overlap, lacks_symbolic_support, _, _, sentence, evidence_id = min(candidates)
-        if negative_overlap > -2 and lacks_symbolic_support:
-            return GeneratedDraft("", ())
-        return GeneratedDraft(sentence, (evidence_id,))
+        candidates.sort(key=lambda item: item[:3])
+        selected_sentences = []
+        selected_ids = []
+        covered_terms: set[str] = set()
+        seen_sentences = set()
+        selected_document = None
+        for _, evidence_index, _, sentence, evidence_id, overlap_terms in candidates:
+            normalized = re.sub(r"\s+", " ", sentence).strip()
+            document_id = evidence[evidence_index].result.chunk.document_id
+            if selected_document is not None and document_id != selected_document:
+                continue
+            if normalized in seen_sentences or (
+                selected_sentences and not overlap_terms - covered_terms
+            ):
+                continue
+            selected_sentences.append(normalized)
+            selected_ids.append(evidence_id)
+            selected_document = document_id
+            seen_sentences.add(normalized)
+            covered_terms.update(overlap_terms)
+            if len(selected_sentences) >= self.max_sentences:
+                break
+        return GeneratedDraft("\n".join(selected_sentences), tuple(selected_ids))
 
 
 class GroundedAnswerGenerator(StudyMaterialGenerator):
@@ -80,18 +123,30 @@ class GroundedAnswerGenerator(StudyMaterialGenerator):
         ]
         draft = self.backend.generate(query.strip(), grounded)
         allowed = {item.evidence_id: item for item in grounded}
-        cited_ids = tuple(dict.fromkeys(draft.cited_evidence_ids))
-        if not draft.content.strip() or not cited_ids:
+        raw_cited_ids = draft.cited_evidence_ids
+        cited_ids = tuple(dict.fromkeys(raw_cited_ids))
+        if not draft.content.strip() or not raw_cited_ids:
             return _refusal(kind, "generator_returned_no_citation")
         if re.search(r"\[(?:E\d+|[^\]]+,\s*pp?\.\d+[^\]]*)\]", draft.content, re.IGNORECASE):
             return _refusal(kind, "generator_embedded_unverified_citation")
-        if any(evidence_id not in allowed for evidence_id in cited_ids):
+        if any(evidence_id not in allowed for evidence_id in raw_cited_ids):
             return _refusal(kind, "generator_cited_unretrieved_evidence")
 
         citations = [_citation_from_evidence(allowed[evidence_id]) for evidence_id in cited_ids]
-        labels = " ".join(citation.label for citation in citations)
+        citation_by_id = {
+            citation.evidence_id: citation for citation in citations
+        }
+        claims = [line.strip() for line in draft.content.splitlines() if line.strip()]
+        if len(claims) == len(raw_cited_ids):
+            content = "\n".join(
+                f"{claim} {citation_by_id[evidence_id].label}"
+                for claim, evidence_id in zip(claims, raw_cited_ids)
+            )
+        else:
+            labels = " ".join(citation.label for citation in citations)
+            content = f"{draft.content.strip()} {labels}"
         return CitedStudyMaterial(
-            content=f"{draft.content.strip()} {labels}",
+            content=content,
             citations=citations,
             kind=kind,
         )
@@ -126,7 +181,7 @@ def _refusal(kind: str, reason: str) -> CitedStudyMaterial:
     )
 
 
-def _tokens(text: str) -> list[str]:
+def meaningful_tokens(text: str) -> list[str]:
     lowered = text.lower()
     stopwords = {
         "a",
@@ -180,4 +235,8 @@ def _normalize_latin(token: str) -> str:
 
 def _sentences(text: str) -> list[str]:
     normalized = re.sub(r"\s+", " ", text).strip()
-    return [part.strip() for part in re.split(r"(?<=[.!?。！？])\s+", normalized) if part.strip()]
+    return [
+        part.strip()
+        for part in re.split(r"(?<=[.!?。！？])\s+", normalized)
+        if part.strip()
+    ]

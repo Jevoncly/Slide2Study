@@ -31,6 +31,8 @@ class GenerationEvaluationTests(unittest.TestCase):
         self.assertEqual(metrics.citation_validity, 1.0)
         self.assertEqual(metrics.citation_accuracy, 1.0)
         self.assertEqual(metrics.citation_coverage, 1.0)
+        self.assertEqual(metrics.exact_extractive_faithfulness, 1.0)
+        self.assertGreater(metrics.lexical_answer_coverage, 0.5)
         self.assertTrue(diagnostics[0]["has_accurate_citation"])
 
     def test_measures_correct_refusal_for_unanswerable_query(self):

@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Protocol
 
+from slide2study.generation import meaningful_tokens
 from slide2study.interfaces import StudyMaterialGenerator
 from slide2study.models import SearchResult
 
@@ -21,6 +22,8 @@ class GenerationMetrics:
     citation_validity: float
     citation_accuracy: float
     citation_coverage: float
+    exact_extractive_faithfulness: float
+    lexical_answer_coverage: float
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)
@@ -42,6 +45,8 @@ def evaluate_generation(
     covered_answers = 0
     answerable_queries = 0
     answered_queries = 0
+    faithful_answers = 0
+    lexical_coverage_sum = 0.0
 
     for index, example in enumerate(examples, 1):
         query = str(example.get("query", "")).strip()
@@ -77,6 +82,25 @@ def evaluate_generation(
             accurate_citations += int(accurate)
             correct_for_query = correct_for_query or accurate
         covered_answers += int(answerable and correct_for_query)
+        cited_texts = [retrieved_by_id[citation.chunk_id].text for citation in material.citations]
+        answer_text = material.content
+        for citation in material.citations:
+            answer_text = answer_text.replace(citation.label, "")
+        claims = [line.strip() for line in answer_text.splitlines() if line.strip()]
+        faithful = bool(
+            not material.refused
+            and claims
+            and all(
+                any(_normalize_text(claim) in _normalize_text(text) for text in cited_texts)
+                for claim in claims
+            )
+        )
+        faithful_answers += int(faithful)
+        query_terms = set(meaningful_tokens(query))
+        answer_terms = set(meaningful_tokens(answer_text))
+        lexical_coverage = len(query_terms & answer_terms) / len(query_terms) if query_terms else 0.0
+        if answerable:
+            lexical_coverage_sum += lexical_coverage
         diagnostics.append(
             {
                 "id": example.get("id", f"example-{index}"),
@@ -87,6 +111,8 @@ def evaluate_generation(
                 "retrieved_chunk_ids": list(retrieved_by_id),
                 "cited_chunk_ids": [citation.chunk_id for citation in material.citations],
                 "has_accurate_citation": correct_for_query,
+                "exact_extractive_faithful": faithful,
+                "lexical_answer_coverage": round(lexical_coverage, 6),
             }
         )
 
@@ -104,5 +130,17 @@ def evaluate_generation(
         citation_coverage=(
             round(covered_answers / answerable_queries, 6) if answerable_queries else 1.0
         ),
+        exact_extractive_faithfulness=(
+            round(faithful_answers / answered_queries, 6) if answered_queries else 1.0
+        ),
+        lexical_answer_coverage=(
+            round(lexical_coverage_sum / answerable_queries, 6)
+            if answerable_queries
+            else 1.0
+        ),
     )
     return metrics, diagnostics
+
+
+def _normalize_text(text: str) -> str:
+    return " ".join(text.split()).casefold()

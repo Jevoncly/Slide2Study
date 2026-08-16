@@ -8,7 +8,11 @@ from unittest.mock import patch
 
 from slide2study.cli import main as cli_main
 from slide2study.dense import write_chunk_embedding_cache
-from slide2study.generation import GeneratedDraft, GroundedAnswerGenerator
+from slide2study.generation import (
+    ExtractiveAnswerBackend,
+    GeneratedDraft,
+    GroundedAnswerGenerator,
+)
 from slide2study.models import Chunk, SearchResult
 
 
@@ -47,6 +51,22 @@ class GroundedGenerationTests(unittest.TestCase):
             [result("chunk-1", 9, "Long paths may have greater search cost.")],
         )
         self.assertTrue(material.refused)
+
+    def test_combines_complementary_sentences_and_citations(self):
+        material = GroundedAnswerGenerator(ExtractiveAnswerBackend(2)).generate(
+            "How do validation data and test data differ?",
+            [
+                result("validation", 3, "Validation data selects model hyperparameters.", 1),
+                result("test", 4, "Test data provides the final unbiased evaluation.", 2),
+            ],
+        )
+        self.assertFalse(material.refused)
+        self.assertEqual(material.cited_pages, [3, 4])
+        self.assertIn("Validation data selects model hyperparameters.", material.content)
+        self.assertIn("Test data provides the final unbiased evaluation.", material.content)
+        lines = material.content.splitlines()
+        self.assertIn("p.3", lines[0])
+        self.assertIn("p.4", lines[1])
 
     def test_unretrieved_citation_fails_closed(self):
         class UnsafeBackend:

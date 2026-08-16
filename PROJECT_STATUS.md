@@ -388,11 +388,23 @@ multimodal page retriever。
 - 新增 6 条明确课外的 synthetic refusal 集。收紧实质词匹配并过滤英文停用词后，拒答准确率
   从 0.167 提升到 1.000；BM25 和 Dense 均保持 1.000，且所有输出引用有效率为 1.000。
 
+### 3.28 离线多证据答案与 faithfulness
+
+- extractive 后端支持最多 1–3 条互补证据句；补充句必须覆盖尚未回答的问题词项，并与首条
+  证据来自同一文档。每句话后紧跟自己的页码引用，避免多引用集中在结尾造成归属不清。
+- 新增 exact-extractive faithfulness：逐条检查输出句是否原样存在于其引用 chunk；同时新增
+  lexical answer coverage，作为离线答案完整度的可复现代理指标。
+- Dense 单句模式在 15 条生成 holdout 上为：引用准确率 0.917、引用覆盖率 0.733、词项覆盖率
+  0.407、faithfulness 1.000。最多 3 句时为 0.737/0.800/0.499/1.000。
+- 多证据提高引用覆盖 0.067、词项覆盖 0.092，但引用准确率下降 0.180；因此默认仍为 1 句，
+  `--max-answer-sentences 2/3` 只作为用户显式选择。该 holdout 已用于本轮生成策略比较，后续新
+  生成算法不得再把它称为未查看的独立生成测试集。
+
 ## 4. 验证证据
 
 ### 4.1 自动化测试
 
-- 当前测试：57/57 通过；Ruff 检查通过。
+- 当前测试：58/58 通过；Ruff 检查通过。
 - 测试覆盖：解析、质量诊断、三层 chunk、层级校验、BM25、评测指标、hard negatives、
   页面清单、PDF/PPTX 渲染流程、向量缓存及哈希校验、视觉页面排序、页面级评测、
   通用 chunk→page 映射、页面/chunk 加权 RRF、题型路由、逐题诊断、Dense 排序、chunk 缓存
@@ -441,7 +453,7 @@ python -m unittest discover -s tests -v
   Dense，题型门控在扩充 dev 上超过 Dense。新增 24 条 dev 为 AI 复核，正式对外结论前仍应
   做独立人工抽查；人工 test 仍只有 6 条。检索预训练 Reranker 已在 dev 显著提升排序质量，
   但尚未经过冻结 test 验证；多模态对比学习仍未实现。
-- 已实现 BM25/Dense 离线 extractive 基线和生成评测；不计划接入外部生成 API。多证据答案、
+- 已实现 BM25/Dense 离线 extractive 基线、多证据答案和生成评测；不计划接入外部生成 API。
   笔记、闪卡、题库、可点击引用和 UI 仍未实现。
 - 视觉页数量较多；后续需要通过标注集校准视觉风险阈值，而不是只依赖启发式规则。
 
@@ -488,8 +500,8 @@ slide2study build-negative-review-pack artifacts\course_chunks.jsonl artifacts\b
 1. 保持 Dense 为默认检索器，将 Reranker 记录为“dev 提升、扩充 test 未复现”的失败消融；
    不得围绕当前 test 调模型或 candidate-k。
 2. 题型路由已经在 42 条 dev 上冻结；不得再用现有 18 条已查看 test 验证或调参。
-3. 保持完全离线，优先实现多证据答案组合与本地 Dense 证据选择，再扩展离线章节摘要和闪卡；
-   同时补齐 exact-extractive faithfulness、答案完整性和端到端延迟评测。
+3. 保持完全离线；多证据答案与 faithfulness 已完成，下一步实现带页码的离线章节摘要和闪卡，
+   并补齐端到端延迟评测。
 
 短期最重要的不是继续堆功能，而是先获得可信的评测集和 baseline 数字。
 

@@ -28,7 +28,7 @@ from slide2study.fusion import (
     ReciprocalRankFusionChunkRetriever,
     ReciprocalRankFusionRetriever,
 )
-from slide2study.generation import GroundedAnswerGenerator
+from slide2study.generation import ExtractiveAnswerBackend, GroundedAnswerGenerator
 from slide2study.generation_evaluation import evaluate_generation
 from slide2study.io import load_chunks, read_jsonl, write_jsonl
 from slide2study.negative_review import apply_negative_reviews, build_negative_review_pack
@@ -290,6 +290,7 @@ def build_parser() -> argparse.ArgumentParser:
     answer.add_argument("--dense-model")
     answer.add_argument("--device")
     answer.add_argument("--dense-batch-size", type=int, default=32)
+    answer.add_argument("--max-answer-sentences", type=int, default=1)
     answer.add_argument("--output", type=Path)
 
     generation_evaluation = commands.add_parser(
@@ -304,6 +305,7 @@ def build_parser() -> argparse.ArgumentParser:
     generation_evaluation.add_argument("--dense-model")
     generation_evaluation.add_argument("--device")
     generation_evaluation.add_argument("--dense-batch-size", type=int, default=32)
+    generation_evaluation.add_argument("--max-answer-sentences", type=int, default=1)
     generation_evaluation.add_argument("--top-k", type=int, default=5)
     generation_evaluation.add_argument("--levels", type=_parse_levels, default={"passage"})
     generation_evaluation.add_argument("--output", type=Path)
@@ -1195,12 +1197,14 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "answer":
         evidence = retriever.search(args.query, args.top_k)
-        material = GroundedAnswerGenerator().generate(args.query, evidence)
+        generator = GroundedAnswerGenerator(ExtractiveAnswerBackend(args.max_answer_sentences))
+        material = generator.generate(args.query, evidence)
         report = {
             **material.to_dict(),
             "query": args.query,
             "retriever": retriever_name,
             "retriever_model": retriever_model,
+            "max_answer_sentences": args.max_answer_sentences,
             "retrieved_chunk_ids": [result.chunk.chunk_id for result in evidence],
         }
         if args.output:
@@ -1212,8 +1216,9 @@ def main(argv: list[str] | None = None) -> int:
         _print_json(report, indent=2)
         return 0
     if args.command == "generation-evaluate":
+        generator = GroundedAnswerGenerator(ExtractiveAnswerBackend(args.max_answer_sentences))
         metrics, diagnostics = evaluate_generation(
-            GroundedAnswerGenerator(),
+            generator,
             retriever,
             list(read_jsonl(args.dataset)),
             args.top_k,
@@ -1224,6 +1229,7 @@ def main(argv: list[str] | None = None) -> int:
                 "retriever": retriever_name,
                 "retriever_model": retriever_model,
                 "top_k": args.top_k,
+                "max_answer_sentences": args.max_answer_sentences,
                 "dataset": str(args.dataset.resolve()),
             },
             "metrics": metrics.to_dict(),

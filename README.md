@@ -55,6 +55,7 @@ slide2study hybrid-evaluate artifacts/course_chunks.jsonl data/private/eval.json
 slide2study dense-index artifacts/course_chunks.jsonl --output artifacts/dense_embeddings.json --levels passage
 slide2study answer artifacts/course_chunks.jsonl "What does lambda control?" --top-k 5 --output artifacts/cited_answer.json
 slide2study answer artifacts/course_chunks.jsonl "What does lambda control?" --retriever dense --dense-cache artifacts/dense_embeddings.json --output artifacts/dense_cited_answer.json
+slide2study answer artifacts/course_chunks.jsonl "Compare validation and test data" --retriever dense --dense-cache artifacts/dense_embeddings.json --max-answer-sentences 3
 slide2study generation-evaluate artifacts/course_chunks.jsonl data/generation_eval.jsonl --retriever dense --dense-cache artifacts/dense_embeddings.json --output artifacts/generation_eval.json
 slide2study dense-evaluate artifacts/course_chunks.jsonl data/private/eval.jsonl --cache artifacts/dense_embeddings.json --split test --top-k 5 --output artifacts/dense_report.json
 slide2study text-hybrid-evaluate artifacts/course_chunks.jsonl data/private/eval.jsonl --cache artifacts/dense_embeddings.json --bm25-weight 0.25 --dense-weight 1 --split test --output artifacts/text_hybrid_report.json
@@ -86,6 +87,9 @@ BM25 与 CLIP；同一报告包含三路指标及逐题 Top 页面、命中状�
 `--dense-cache` 可复用本地 Dense 向量。引用只能由本次检索结果构造，无实质词项重合或无可用
 证据时会拒答。`generation-evaluate` 对 BM25/Dense 使用相同口径计算拒答准确率、引用有效率、
 引用准确率和引用覆盖率，并保存逐题诊断。生成链路不需要 API key，也不会发起网络请求。
+默认最多抽取 1 条证据句以优先保证引用准确率；`--max-answer-sentences 2/3` 会只从首条证据的
+同一文档选择能覆盖新问题词项的补充句，并把引用紧跟在各句之后。独立生成评测中，3 句模式
+提高了引用覆盖和词项完整度，但降低引用准确率，因此作为显式选项而不是默认值。
 `text-hybrid-evaluate` 对 BM25、Dense 和加权 RRF 使用同一批 chunk，保存三路指标和逐题
 Top chunk 诊断。融合参数必须只在 dev 上选择；如果 test 未超过 Dense，应继续使用 Dense
 单路作为默认检索器。
