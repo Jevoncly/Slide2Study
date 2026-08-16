@@ -59,6 +59,7 @@ slide2study answer artifacts/course_chunks.jsonl "Compare validation and test da
 slide2study generation-evaluate artifacts/course_chunks.jsonl data/generation_eval.jsonl --retriever dense --dense-cache artifacts/dense_embeddings.json --output artifacts/generation_eval.json
 slide2study study-guide artifacts/course_chunks.jsonl --document-id doc-example --section "Model Selection" --summary-bullets 5 --flashcards 5 --output artifacts/model_selection_guide.json
 slide2study build-study-ui artifacts/course_chunks.jsonl --manifests artifacts/pages/*.jsonl --document-id doc-example --section "Model Selection" --output-dir artifacts/study_ui
+slide2study build-study-review-pack artifacts/course_chunks.jsonl --manifests artifacts/pages/*.jsonl --sample-size 30 --output-dir artifacts/study_material_review
 slide2study dense-evaluate artifacts/course_chunks.jsonl data/private/eval.jsonl --cache artifacts/dense_embeddings.json --split test --top-k 5 --output artifacts/dense_report.json
 slide2study text-hybrid-evaluate artifacts/course_chunks.jsonl data/private/eval.jsonl --cache artifacts/dense_embeddings.json --bm25-weight 0.25 --dense-weight 1 --split test --output artifacts/text_hybrid_report.json
 slide2study type-aware-evaluate artifacts/course_chunks.jsonl data/private/eval.jsonl --manifests artifacts/pages/*.jsonl --dense-cache artifacts/dense_embeddings.json --visual-cache artifacts/page_embeddings.json --route text=bm25_page --route table_chart=clip_page --route visual_only=clip_page --split dev --output artifacts/type_aware_dev.json
@@ -100,6 +101,9 @@ BM25 与 CLIP；同一报告包含三路指标及逐题 Top 页面、命中状�
 只保存在当前浏览器，不依赖服务器、外部 API 或网络资源。不传 `--document-id` 和 `--section`
 时会自动为语料中的全部可用课件和章节生成课程选择器；重点概念使用原文术语及证据句，公式/
 参数页只展示可抽取的原文和符号，不臆测课件没有说明的符号含义。
+`build-study-review-pack` 按课件轮询抽样章节，避免样本被单份课件主导。复核页面分别记录摘要、
+概念、闪卡和公式/参数的“通过、需修正、不适用”，支持备注、本机进度和 JSONL 导出；复核包
+使用内容指纹隔离浏览器状态，重新生成内容后不会沿用旧决定。
 `text-hybrid-evaluate` 对 BM25、Dense 和加权 RRF 使用同一批 chunk，保存三路指标和逐题
 Top chunk 诊断。融合参数必须只在 dev 上选择；如果 test 未超过 Dense，应继续使用 Dense
 单路作为默认检索器。

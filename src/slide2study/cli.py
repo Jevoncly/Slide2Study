@@ -44,6 +44,7 @@ from slide2study.reranking import (
 from slide2study.retrieval import BM25Retriever, DenseRetriever
 from slide2study.review import build_review_pack
 from slide2study.study import build_chapter_study_guide, build_course_study_guides
+from slide2study.study_review import build_study_review_pack, stratified_section_sample
 from slide2study.study_ui import build_course_study_ui
 from slide2study.training import mine_hard_negatives
 from slide2study.vision import (
@@ -337,6 +338,18 @@ def build_parser() -> argparse.ArgumentParser:
     study_ui.add_argument("--concepts", type=int, default=5)
     study_ui.add_argument("--formulas", type=int, default=5)
     study_ui.add_argument("--output-dir", type=Path, required=True)
+
+    study_review = commands.add_parser(
+        "build-study-review-pack", help="Build a local human review pack for study materials"
+    )
+    study_review.add_argument("corpus", type=Path)
+    study_review.add_argument("--manifests", nargs="+", type=Path, required=True)
+    study_review.add_argument("--sample-size", type=int, default=30)
+    study_review.add_argument("--summary-bullets", type=int, default=4)
+    study_review.add_argument("--flashcards", type=int, default=4)
+    study_review.add_argument("--concepts", type=int, default=4)
+    study_review.add_argument("--formulas", type=int, default=4)
+    study_review.add_argument("--output-dir", type=Path, required=True)
 
     evaluation = commands.add_parser("evaluate", help="Evaluate BM25 on a JSONL QA set")
     evaluation.add_argument("corpus", type=Path)
@@ -1254,6 +1267,34 @@ def main(argv: list[str] | None = None) -> int:
                         for page in guide.to_dict()["cited_pages"]
                     }
                 ),
+                "latency_ms": {"end_to_end": round((perf_counter() - started_at) * 1000, 3)},
+                "output": str(output),
+            },
+            indent=2,
+        )
+        return 0
+    if args.command == "build-study-review-pack":
+        started_at = perf_counter()
+        all_guides = build_course_study_guides(
+            load_chunks(args.corpus),
+            summary_bullets=args.summary_bullets,
+            flashcard_count=args.flashcards,
+            concept_count=args.concepts,
+            formula_count=args.formulas,
+        )
+        guides = stratified_section_sample(all_guides, args.sample_size)
+        rendered_pages = [
+            page
+            for manifest in _expand_paths(args.manifests)
+            for page in load_page_manifest(manifest)
+        ]
+        output = build_study_review_pack(guides, rendered_pages, args.output_dir)
+        _print_json(
+            {
+                "mode": "offline-study-material-review",
+                "available_sections": len(all_guides),
+                "sampled_sections": len(guides),
+                "sampled_documents": len({guide.document_id for guide in guides}),
                 "latency_ms": {"end_to_end": round((perf_counter() - started_at) * 1000, 3)},
                 "output": str(output),
             },

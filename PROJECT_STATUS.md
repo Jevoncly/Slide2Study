@@ -8,11 +8,11 @@
 - 课程测试数据：`D:\important files\Unimelb\S1`
 - GitHub：<https://github.com/Jevoncly/Slide2Study>
 - 当前分支：`codex/expand-verified-dev`
-- 上一阶段提交：`4819970 Add offline study UI`
+- 上一阶段提交：`2474bad Add full-course offline study UI`
 - 远程跟踪分支：`origin/codex/expand-verified-dev`
 - 历史 Draft PR：<https://github.com/Jevoncly/Slide2Study/pull/1>（指向旧分支）
 
-远程分支已推送至 `4819970`；本阶段整门课程导航与概念/公式改动尚未推送。
+远程分支已推送至 `2474bad`；本阶段生成质量复核包改动尚未推送。
 
 ## 2. 项目目标
 
@@ -435,11 +435,20 @@ multimodal page retriever。
   61 条公式/参数证据和 142 个去重引用页；端到端约 257 ms，HTML 数据、资源数量及交互脚本
   语法检查全部通过。产物位于 `artifacts/public_course_study_ui/index.html`。
 
+### 3.32 生成质量人工复核包
+
+- 新增 `build-study-review-pack`，按课件轮询抽取章节，避免审阅样本被章节较多的单份课件主导。
+- 页面同时展示摘要、概念、闪卡、公式/参数及其可点击原始页证据；四类内容分别选择“通过、
+  需修正、不适用”，并支持备注、本机进度、跳到未复核和 JSONL 导出。
+- 浏览器进度使用复核内容 SHA-256 指纹隔离；生成内容变化后不会错误继承旧版决定。
+- 当前复核包从 45 个可用章节中抽取 30 个，覆盖全部 7 份课件和 99 个去重证据页；数据、页面
+  映射及导出脚本语法均已验证。产物为 `artifacts/study_material_review/index.html`，尚未人工复核。
+
 ## 4. 验证证据
 
 ### 4.1 自动化测试
 
-- 当前测试：66/66 通过；Ruff 检查通过。
+- 当前测试：68/68 通过；Ruff 检查通过。
 - 测试覆盖：解析、质量诊断、三层 chunk、层级校验、BM25、评测指标、hard negatives、
   页面清单、PDF/PPTX 渲染流程、向量缓存及哈希校验、视觉页面排序、页面级评测、
   通用 chunk→page 映射、页面/chunk 加权 RRF、题型路由、逐题诊断、Dense 排序、chunk 缓存
@@ -536,8 +545,8 @@ slide2study build-negative-review-pack artifacts\course_chunks.jsonl artifacts\b
 1. 保持 Dense 为默认检索器，将 Reranker 记录为“dev 提升、扩充 test 未复现”的失败消融；
    不得围绕当前 test 调模型或 candidate-k。
 2. 题型路由已经在 42 条 dev 上冻结；不得再用现有 18 条已查看 test 验证或调参。
-3. 保持完全离线；下一步从公式邻近定义句提取可靠的符号含义，再实现带证据的基础题、应用题
-   和综合推理题。
+3. 先完成 30 个章节的生成质量复核并分析四类通过率；根据真实错误修正规则后，再从公式邻近
+   定义句提取符号含义并实现带证据的分层题库。
 
 短期最重要的不是继续堆功能，而是先获得可信的评测集和 baseline 数字。
 
@@ -560,5 +569,5 @@ git log -3 --oneline --decorate
 python -m unittest discover -s tests -v
 ```
 
-预期分支是 `codex/expand-verified-dev`，最近已推送里程碑是 `4819970`。如果本文档后续被提交，
+预期分支是 `codex/expand-verified-dev`，最近已推送里程碑是 `2474bad`。如果本文档后续被提交，
 则以更新后的 HEAD 为准。
