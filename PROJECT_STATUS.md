@@ -253,12 +253,20 @@ multimodal page retriever。
 - 本阶段只完成并验证训练基础设施，尚未用未经人工筛查的公开课件负例训练或查看 test。
 - 已从公开课件 train 的 18 个问题生成 72 条待复核候选：hard 36、medium 18、easy 18；
   本地审阅包为 `artifacts/public_courseware_reranker_review/index.html`，72/72 条可解析。
+- 本轮人工约定“未复核代表通过”：导出含 pending 62、false negative 5、uncertain 5；通过
+  显式 `--pending-as-valid --allow-incomplete` 固化 62 条训练 triplet，覆盖全部 18 个问题。
+- 使用 62 条 triplet 得到 79 个去重 pair（正例 18、负例 61），CPU 训练在连续两轮 dev MRR
+  无提升后早停；最佳内部 epoch 为 4，统一 dev 评测 Recall@5 0.500、MRR 0.220、nDCG@5
+  0.241，平均延迟 858.4 ms。
+- 同一 dev 的 Dense chunk 基线为 Recall@5 0.967、MRR 0.806、nDCG@5 0.836，平均延迟
+  81.2 ms；当前 Reranker 大幅退化且约慢 10.6 倍，因此不得设为默认或运行 test。最佳 checkpoint 与报告仅保存在
+  `artifacts/public_courseware_reranker_e5` 和对应本地报告中。
 
 ## 4. 验证证据
 
 ### 4.1 自动化测试
 
-- 当前测试：45/45 通过；Ruff 检查通过。
+- 当前测试：46/46 通过；Ruff 检查通过。
 - 测试覆盖：解析、质量诊断、三层 chunk、层级校验、BM25、评测指标、hard negatives、
   页面清单、PDF/PPTX 渲染流程、向量缓存及哈希校验、视觉页面排序、页面级评测、
   通用 chunk→page 映射、页面/chunk 加权 RRF、题型路由、逐题诊断、Dense 排序、chunk 缓存

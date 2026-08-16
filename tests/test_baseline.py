@@ -435,6 +435,22 @@ class BaselineTests(unittest.TestCase):
                 [{"review_id": "negative-0001", "review_decision": "uncertain"}]
             )
 
+    def test_apply_negative_reviews_can_treat_pending_as_valid_explicitly(self):
+        row = {
+            "review_id": "negative-0001",
+            "review_decision": "pending",
+            "query": "question",
+            "positive_chunk_id": "positive",
+            "negative_chunk_id": "negative",
+            "negative_rank": 2,
+            "miner": "dense:test",
+            "difficulty": "hard",
+        }
+        triplets, summary = apply_negative_reviews([row], pending_as_valid=True)
+        self.assertEqual(len(triplets), 1)
+        self.assertEqual(summary["retained_triplets"], 1)
+        self.assertTrue(summary["pending_as_valid"])
+
     def test_reranker_pairs_deduplicate_positive_examples(self):
         chunks = [
             Chunk("positive", "deck", 1, 1, "correct evidence"),

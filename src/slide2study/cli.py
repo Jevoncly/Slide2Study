@@ -353,6 +353,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Filter valid negatives even when pending or uncertain rows remain",
     )
+    apply_reviews.add_argument(
+        "--pending-as-valid",
+        action="store_true",
+        help="Treat unanswered review rows as valid negatives by explicit reviewer convention",
+    )
 
     train_reranker = commands.add_parser(
         "train-reranker", help="Fine-tune a cross-encoder from reviewed triplets"
@@ -903,7 +908,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "apply-negative-reviews":
         reviewed_rows = list(read_jsonl(args.reviews))
         triplets, summary = apply_negative_reviews(
-            reviewed_rows, require_complete=not args.allow_incomplete
+            reviewed_rows,
+            require_complete=not args.allow_incomplete,
+            pending_as_valid=args.pending_as_valid,
         )
         write_jsonl(triplets, args.output)
         summary["output"] = str(args.output)

@@ -92,6 +92,8 @@ passage 仍全部排除出负例。
 `apply-negative-reviews` 默认要求全部条目已明确复核，只保留 `valid_negative`，并去除审阅
 页面预览字段，输出可直接供训练使用的规范 triplet；存在 `pending` 或 `uncertain` 时会拒绝
 生成，除非显式使用 `--allow-incomplete`。
+如果一次复核约定“未选择即通过”，必须显式同时使用 `--pending-as-valid --allow-incomplete`；
+该约定会写入摘要，明确标为假负例或不确定的条目仍会被排除。
 `train-reranker` 将规范 triplet 展开为 query-positive 和 query-negative 二分类样本，正例对会
 自动去重；默认从 multilingual-e5-small 初始化交叉编码器分类头，固定随机种子，并将模型
 checkpoint 与训练配置写入输出目录。传入 `--dev-dataset` 和 `--dense-cache` 后，命令冻结

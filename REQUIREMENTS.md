@@ -143,7 +143,7 @@ Slide2Study 是一个面向算法工程师求职展示的多模态、结构感�
 - [x] 支持最佳 checkpoint 保存和重新加载
 - [x] 支持基于验证集 MRR 的 early stopping
 - [x] 输出逐 epoch 验证曲线
-- [ ] 比较微调前后 MRR、nDCG 和延迟
+- [x] 比较微调前后 MRR、nDCG 和延迟
 - [ ] 对失败案例分类分析
 
 验收标准：在相同候选集上，微调 reranker 明显提高 MRR/nDCG。

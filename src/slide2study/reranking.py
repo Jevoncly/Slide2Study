@@ -212,8 +212,9 @@ def train_cross_encoder(
         device=device,
         local_files_only=local_files_only,
     )
-    steps = math.ceil(len(examples) / batch_size) * epochs
-    warmup_steps = max(1, math.ceil(steps * 0.1))
+    steps_per_epoch = math.ceil(len(examples) / batch_size)
+    planned_steps = steps_per_epoch * epochs
+    warmup_steps = max(1, math.ceil(planned_steps * 0.1))
     target = Path(output_dir)
     target.mkdir(parents=True, exist_ok=True)
     evaluator = (
@@ -250,7 +251,9 @@ def train_cross_encoder(
         "epochs": epochs,
         "learning_rate": learning_rate,
         "seed": seed,
-        "training_steps": steps,
+        "training_steps": steps_per_epoch * (len(evaluator.history) if evaluator else epochs),
+        "planned_training_steps": planned_steps,
+        "completed_epochs": len(evaluator.history) if evaluator else epochs,
         "warmup_steps": warmup_steps,
         "output_dir": str(target),
         "validation_queries": len(validation_groups or []),
