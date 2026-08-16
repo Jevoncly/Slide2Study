@@ -5,6 +5,7 @@ import json
 from pathlib import Path
 
 from build_public_test_expansion import CANDIDATES as TEST_EXPANSION_CANDIDATES
+from build_public_visual_dev_expansion import CANDIDATES as VISUAL_DEV_EXPANSION_CANDIDATES
 
 CANDIDATES = [
     {
@@ -552,7 +553,11 @@ CANDIDATES = [
 ]
 
 CANDIDATES.extend(TEST_EXPANSION_CANDIDATES)
+CANDIDATES.extend(VISUAL_DEV_EXPANSION_CANDIDATES)
 TEST_EXPANSION_IDS = {candidate["id"] for candidate in TEST_EXPANSION_CANDIDATES}
+VISUAL_DEV_EXPANSION_IDS = {
+    candidate["id"] for candidate in VISUAL_DEV_EXPANSION_CANDIDATES
+}
 
 HUMAN_REVIEWED_IDS = {
     f"public-{topic}-{index:03d}"
@@ -562,6 +567,10 @@ HUMAN_REVIEWED_IDS = {
     f"public-search-{index:03d}" for index in range(19, 23)
 } | {
     f"public-mdp-{index:03d}" for index in range(19, 27)
+} | {
+    f"public-search-{index:03d}" for index in range(23, 29)
+} | {
+    f"public-mdp-{index:03d}" for index in range(27, 33)
 }
 
 
@@ -610,6 +619,8 @@ def main() -> int:
         }
         if candidate["id"] in TEST_EXPANSION_IDS:
             record["expansion_round"] = "test-expansion-v1"
+        elif candidate["id"] in VISUAL_DEV_EXPANSION_IDS:
+            record["expansion_round"] = "visual-dev-expansion-v1"
         if args.reviewed:
             record["review_decision"] = "verified"
             record["reviewer_type"] = "human" if candidate["id"] in HUMAN_REVIEWED_IDS else "ai"

@@ -213,10 +213,10 @@ multimodal page retriever。
 - 现有 `ingest-corpus` 已实测导入全部 22 份 PDF：328 页、935 个 chunk、失败 0。
 - 原始文件、OpenDSA 稀疏源码和解析产物位于被 Git 忽略的 `data/raw/`、`artifacts/`；公开
   仓库只保留清单、下载脚本和许可说明。
-- 已建立 66 条公开检索记录：原 54 条及新增 12 条 test 均已完成人工确认；所有记录的
+- 已建立 78 条公开检索记录：原 54 条、新增 12 条 test 和新增 12 条视觉 dev 均已完成人工确认；所有记录的
   `reviewer_type` 均为 `human`。
-- train/dev/test 为 18/30/18，text/formula/cross-page/table-chart/visual-only 为 25/14/12/6/9；
-  66/66 条均为 `verified`，严格数据校验通过。正式文件为
+- train/dev/test 为 18/42/18，text/formula/cross-page/table-chart/visual-only 为 25/14/12/12/15；
+  78/78 条均为 `verified`，严格数据校验通过。正式文件为
   `data/public_course_eval_reviewed.jsonl`。
 - 评测语料已收紧为 7 份纯课件、256 页、566 个层级 chunk（253 个 passage）；复习资料只用作
   问题来源，不参与检索，避免 discussion 或答案文件泄漏。
@@ -323,16 +323,30 @@ multimodal page retriever。
 - 以上 test 结果只用于最终报告，不据此调整模型、路由或 candidate-k。后续改进必须在
   train/dev 建立并冻结后，才能再用新的独立 test 验证。
 
-### 3.23 视觉 dev 扩充候选
+### 3.23 视觉 dev 扩充
 
 - 新增可复现脚本 `scripts/build_public_visual_dev_expansion.py`，从正式 66 条数据未使用的页面
   构建 12 条视觉重型 dev 候选：table/chart 6 条、visual-only 6 条。
 - 12 条覆盖 Search 与 MDP 各 6 条，共引用 14 个互不属于现有标注的证据页；已逐页检查问题、
   答案提示和渲染图，严格数据校验通过。
-- 候选文件为 `data/public_course_visual_dev_candidates.jsonl`，当前仍为 `candidate`，没有合并
-  进入正式数据，也没有用于选择模型或路由。
-- 本地人工审阅包为 `artifacts/visual_dev_human_review/index.html`：12 条、14 张证据图、缺图 0，
-  初始状态 0/12。只有完成独立确认后，才扩大 dev 并重跑 Dense、CLIP、Dense+CLIP 与题型路由。
+- 用户已确认 12/12 条正确，现已作为 `human + verified` 合并进入正式 dev；候选文件
+  `data/public_course_visual_dev_candidates.jsonl` 保留为审阅前审计记录。
+- 本地人工审阅包为 `artifacts/visual_dev_human_review/index.html`：12 条、14 张证据图、缺图 0。
+  统一生成脚本可精确重建全部 78 条记录且不会丢失人工状态。
+
+### 3.24 扩充 dev 的视觉路由冻结
+
+- 在 42 条人工 dev 上统一比较页面级系统：BM25 Recall@5/MRR/nDCG@5 为
+  0.690/0.485/0.524，Dense 为 0.762/0.623/0.643，CLIP 为 0.738/0.466/0.504，
+  Dense+CLIP RRF 为 0.786/0.635/0.638。
+- 扩充后的 visual-only 共 10 条：CLIP Recall@5 为 0.900，Dense+CLIP RRF 只有 0.700；
+  table/chart 共 8 条，CLIP Recall@5 为 0.875，仍优于 Dense 的 0.500 和 RRF 的 0.750。
+- 因此冻结题型路由为 text→BM25，formula/cross-page→Dense，table/chart/visual-only→CLIP。
+  新路由在 dev 的 Recall@5/MRR/nDCG@5 为 0.952/0.686/0.733，平均延迟 48.2 ms；旧路由为
+  0.905/0.690/0.724、105.3 ms。新路由以 MRR 下降 0.004 的代价提高 Recall 0.048、nDCG 0.009，
+  并将平均延迟降低约 54%。
+- 当前 2 条未召回为 `public-search-024`（table/chart）和 `public-mdp-029`（visual-only）。本轮
+  只用 dev 选路由，未再次运行或检查现有 18 条 test。
 
 ## 4. 验证证据
 
@@ -432,9 +446,8 @@ slide2study build-negative-review-pack artifacts\course_chunks.jsonl artifacts\b
 
 1. 保持 Dense 为默认检索器，将 Reranker 记录为“dev 提升、扩充 test 未复现”的失败消融；
    不得围绕当前 test 调模型或 candidate-k。
-2. 完成 12 条视觉 dev 候选的独立确认；合并后比较已有 CLIP、Dense+CLIP 和题型路由，并在
-   扩充 dev 上冻结方案。
-3. 为下一轮改进另建未查看的独立 test；验证通过后再接带引用生成。
+2. 题型路由已经在 42 条 dev 上冻结；不得再用现有 18 条已查看 test 验证或调参。
+3. 为冻结的新视觉路由另建未查看的独立 test；验证通过后再接带引用生成。
 
 短期最重要的不是继续堆功能，而是先获得可信的评测集和 baseline 数字。
 
