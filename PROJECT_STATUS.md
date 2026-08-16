@@ -348,6 +348,17 @@ multimodal page retriever。
 - 当前 2 条未召回为 `public-search-024`（table/chart）和 `public-mdp-029`（visual-only）。本轮
   只用 dev 选路由，未再次运行或检查现有 18 条 test。
 
+### 3.25 独立视觉路由 holdout 候选
+
+- 新增 `scripts/build_public_visual_holdout.py`，从正式 78 条数据未使用的证据页构建独立候选，
+  同时拒绝与正式数据重叠、候选内部复用页面、重复 ID 和跨文档标注。
+- 当前 holdout 候选 15 条，text、formula、cross-page、table/chart、visual-only 各 3 条；共
+  20 个证据页，全部逐页检查问题、答案提示和渲染结果，缺图 0，严格数据校验通过。
+- 候选文件为 `data/public_course_visual_holdout_candidates.jsonl`，本地人工审阅包为
+  `artifacts/visual_holdout_human_review/index.html`。所有记录仍为 `candidate`，未合并正式数据。
+- 冻结路由尚未在该 holdout 上运行；只有完成独立人工确认后才允许执行一次最终评测，避免在
+  审阅或修订期间泄漏模型结果。
+
 ## 4. 验证证据
 
 ### 4.1 自动化测试
@@ -447,7 +458,7 @@ slide2study build-negative-review-pack artifacts\course_chunks.jsonl artifacts\b
 1. 保持 Dense 为默认检索器，将 Reranker 记录为“dev 提升、扩充 test 未复现”的失败消融；
    不得围绕当前 test 调模型或 candidate-k。
 2. 题型路由已经在 42 条 dev 上冻结；不得再用现有 18 条已查看 test 验证或调参。
-3. 为冻结的新视觉路由另建未查看的独立 test；验证通过后再接带引用生成。
+3. 完成 15 条独立 holdout 候选的人工确认，再对冻结视觉路由运行一次最终评测；随后接带引用生成。
 
 短期最重要的不是继续堆功能，而是先获得可信的评测集和 baseline 数字。
 
