@@ -112,13 +112,14 @@ def build_chapter_study_guide(
     concept_count: int = 5,
     formula_count: int = 5,
 ) -> ChapterStudyGuide:
-    """Create an exact-extractive chapter summary and cloze flashcards."""
+    """Create an exact-extractive chapter summary and definition flashcards."""
     if summary_bullets <= 0 or flashcard_count <= 0:
         raise ValueError("summary_bullets and flashcard_count must be positive")
     if concept_count < 0 or formula_count < 0:
         raise ValueError("concept_count and formula_count cannot be negative")
 
-    passages = [chunk for chunk in chunks if chunk.level == "passage" and chunk.text.strip()]
+    all_chunks = chunks
+    passages = [chunk for chunk in all_chunks if chunk.level == "passage" and chunk.text.strip()]
     document_ids = sorted({chunk.document_id for chunk in passages})
     if document_id is None:
         if len(document_ids) != 1:
@@ -146,8 +147,21 @@ def build_chapter_study_guide(
         [chunk for chunk in passages if (chunk.section or "Untitled") == selected_section],
         key=lambda chunk: (chunk.page_start, chunk.page_end, chunk.chunk_id),
     )
+    pages = sorted(
+        [
+            chunk
+            for chunk in all_chunks
+            if chunk.level == "page"
+            and chunk.document_id == document_id
+            and (chunk.section or "Untitled") == selected_section
+            and chunk.text.strip()
+            and not chunk.metadata.get("text_retrieval_excluded", False)
+        ],
+        key=lambda chunk: (chunk.page_start, chunk.page_end, chunk.chunk_id),
+    )
+    evidence_chunks = pages or passages
 
-    candidates = _build_candidates(passages)
+    candidates = _build_candidates(evidence_chunks)
     if not candidates:
         raise ValueError("The selected section has no sufficiently informative text")
     term_frequency = Counter(term for item in candidates for term in item.terms)
@@ -165,19 +179,21 @@ def build_chapter_study_guide(
     )
 
     flashcards = []
+    concept_candidates: list[tuple[str, _Candidate]] = []
     used_terms: set[str] = set()
     for item in _select_diverse(candidates, term_frequency, len(candidates)):
-        term = _flashcard_term(item, term_frequency, used_terms)
-        if term is None:
+        card = _definition_flashcard(item)
+        if card is None:
             continue
-        front = re.sub(re.escape(term), "_____", item.text, count=1, flags=re.IGNORECASE)
-        if front == item.text:
+        term, front, back = card
+        if term.casefold() in used_terms:
             continue
         used_terms.add(term.casefold())
+        concept_candidates.append((term, item))
         flashcards.append(
             Flashcard(
                 front=front,
-                back=term,
+                back=back,
                 evidence_text=item.text,
                 citation=_citation(item.chunk, f"F{len(flashcards) + 1}"),
             )
@@ -187,14 +203,11 @@ def build_chapter_study_guide(
 
     concepts = tuple(
         KeyConcept(
-            term=card.back,
-            evidence_text=card.evidence_text,
-            citation=_citation(
-                next(item.chunk for item in candidates if item.text == card.evidence_text),
-                f"C{index}",
-            ),
+            term=term,
+            evidence_text=item.text,
+            citation=_citation(item.chunk, f"C{index}"),
         )
-        for index, card in enumerate(flashcards[:concept_count], 1)
+        for index, (term, item) in enumerate(concept_candidates[:concept_count], 1)
     )
     formulas = tuple(
         FormulaEvidence(
@@ -203,7 +216,7 @@ def build_chapter_study_guide(
             citation=_citation(chunk, f"M{index}"),
         )
         for index, (text, symbols, chunk) in enumerate(
-            _formula_evidence(passages)[:formula_count], 1
+            _formula_evidence(evidence_chunks)[:formula_count], 1
         )
     )
 
@@ -252,7 +265,7 @@ def build_course_study_guides(
         try:
             guides.append(
                 build_chapter_study_guide(
-                    passages,
+                    chunks,
                     document_id=selected_document,
                     section=selected_section,
                     summary_bullets=summary_bullets,
@@ -277,22 +290,36 @@ def _build_candidates(chunks: list[Chunk]) -> list[_Candidate]:
         "educational purposes",
         "registered trademark",
         "university of",
+        "instructors:",
+        "materials are available",
+        "terms of use",
+        "opencourseware",
+        "http://",
+        "https://",
     )
     candidates = []
     seen = set()
     order = 0
     for chunk in chunks:
-        raw_text = chunk.text.replace("§", "\n")
-        for part in re.split(r"(?:\n+|(?<=[.!?。！？])(?=\s|[A-Z]))", raw_text):
-            text = re.sub(r"\s+", " ", part).strip()
-            text = re.sub(r"^[\s•▪■\-–—]+", "", text).strip()
+        if chunk.metadata.get("requires_vision") and len(chunk.text.strip()) < 120:
+            continue
+        for text in _study_units(chunk.text):
             text = re.sub(r"\s+[A-Z][A-Za-z-]{1,20}\?$", "", text).strip()
             terms = frozenset(meaningful_tokens(text))
             key = text.casefold()
             if (
                 len(text) < 20
+                or len(text) > 280
                 or len(terms) < 3
                 or key in seen
+                or key == (chunk.section or "").casefold()
+                or re.match(r"^\d+\s+(?:def|return|if|for|while)\b", key)
+                or re.match(r"^(?:only if|\[?demo\b)", key)
+                or text.endswith(":")
+                or re.search(r"[a-z][A-Z]", text)
+                or re.search(r"\s[A-Z]$", text)
+                or re.search(r"\b(?:a|an|and|as|been|for|from|if|in|of|on|or|that|the|to|when|which|with)$", key)
+                or _looks_like_title(text)
                 or any(marker in key for marker in boilerplate_markers)
             ):
                 continue
@@ -328,46 +355,170 @@ def _select_diverse(
     return sorted(selected, key=lambda item: item.order)
 
 
-def _flashcard_term(
-    candidate: _Candidate,
-    frequencies: Counter[str],
-    used_terms: set[str],
-) -> str | None:
-    phrase_stopwords = {"and", "are", "for", "from", "into", "that", "the", "this", "with"}
-    phrases = []
-    for match in re.finditer(
-        r"\b[A-Z][A-Za-z0-9_-]{3,}\s+[A-Za-z][A-Za-z0-9_-]{3,}\b",
-        candidate.text,
-    ):
-        phrase = match.group(0)
-        words = phrase.casefold().split()
-        if words[1] in phrase_stopwords or phrase.casefold() in used_terms:
-            continue
-        phrase_terms = meaningful_tokens(phrase)
-        if phrase_terms and set(phrase_terms) <= candidate.terms:
-            phrases.append(phrase)
-    if phrases:
-        return max(
-            phrases,
-            key=lambda phrase: (
-                sum(frequencies[term] for term in meaningful_tokens(phrase)),
-                len(phrase),
-                -candidate.text.find(phrase),
-            ),
+def _definition_flashcard(candidate: _Candidate) -> tuple[str, str, str] | None:
+    text = candidate.text.strip().rstrip(".")
+    rejected_terms = {
+        "a solution",
+        "action",
+        "actions",
+        "after the policy",
+        "all these search algorithms",
+        "another basic operation",
+        "base",
+        "base cases",
+        "basic idea",
+        "both",
+        "but everything",
+        "demo",
+        "efficiency",
+        "example",
+        "examples",
+        "exercise",
+        "fact",
+        "fix",
+        "fundamental operation",
+        "goal",
+        "goal test",
+        "hard part",
+        "idea",
+        "implementation",
+        "important",
+        "important lesson",
+        "improvement",
+        "input",
+        "key idea",
+        "lecture",
+        "main idea",
+        "main question",
+        "natural subproblems",
+        "next time",
+        "nodes",
+        "note",
+        "one solution",
+        "one way to solve them",
+        "optimal",
+        "original",
+        "output",
+        "problem",
+        "proof idea",
+        "quantities",
+        "quiz",
+        "recap",
+        "recall",
+        "relation",
+        "remember",
+        "reminder",
+        "result",
+        "review",
+        "rewards",
+        "roads",
+        "sketch",
+        "solution",
+        "running time",
+        "summary",
+        "states",
+        "start",
+        "strategy",
+        "subproblems",
+        "successor",
+        "theorem",
+        "then",
+        "three states",
+        "the bad",
+        "the good",
+        "these",
+        "this",
+        "time",
+        "two actions",
+        "where",
+        "worst-case",
+    }
+
+    def usable(term: str) -> bool:
+        normalized = term.casefold().strip("[] ")
+        words = normalized.split()
+        return (
+            1 <= len(words) <= 6
+            and term[0].isupper()
+            and bool(re.fullmatch(r"[A-Za-z][A-Za-z0-9*' /-]*", term))
+            and normalized not in rejected_terms
+            and not re.fullmatch(r"(?:case|fact|idea|problem|quiz|step)\s+\d+", normalized)
+            and " is " not in normalized
+            and " are " not in normalized
+            and not normalized.startswith(("demo ", "example ", "lecture "))
+            and not any(word in {"can", "if", "should", "will"} for word in words)
+            and not normalized.startswith(
+                (
+                    "a ",
+                    "all ",
+                    "an ",
+                    "another ",
+                    "conceptually ",
+                    "compute ",
+                    "each ",
+                    "finding ",
+                    "first ",
+                    "how ",
+                    "if ",
+                    "imagine ",
+                    "increasing ",
+                    "know ",
+                    "length of ",
+                    "my ",
+                    "nice order ",
+                    "now ",
+                    "often ",
+                    "once ",
+                    "only if ",
+                    "resulting ",
+                    "second ",
+                    "simplest ",
+                    "so ",
+                    "some ",
+                    "that ",
+                    "they ",
+                    "the ",
+                    "there ",
+                    "time to ",
+                    "topological order to ",
+                    "turn ",
+                    "up to ",
+                    "very ",
+                    "we ",
+                    "when ",
+                    "with ",
+                    "your ",
+                )
+            )
         )
-    visible_terms = []
-    for match in re.finditer(r"[A-Za-z][A-Za-z0-9_-]{3,}|[\u3400-\u9fff]{2,6}", candidate.text):
-        term = match.group(0)
-        normalized = term.casefold()
-        if normalized in used_terms or normalized not in candidate.terms:
-            continue
-        visible_terms.append(term)
-    if not visible_terms:
-        return None
-    return max(
-        visible_terms,
-        key=lambda term: (frequencies[term.casefold()], len(term), -candidate.text.find(term)),
+
+    def usable_definition(definition: str) -> bool:
+        return (
+            len(re.findall(r"[A-Za-z]{2,}", definition)) >= 4
+            and definition[0].isalnum()
+            and not re.search(r"[?!…]", text)
+        )
+
+    colon = re.fullmatch(r"([^:]{3,60}):\s+(.{8,180})", text)
+    if colon:
+        term, definition = (part.strip() for part in colon.groups())
+        if usable(term) and usable_definition(definition):
+            return term, f"What is {term}?", definition
+    copula = re.fullmatch(
+        r"(.{3,60}?)\s+(?:is|are|means|refers to|denotes)\s+(.{10,180})",
+        text,
+        flags=re.IGNORECASE,
     )
+    if copula:
+        term, definition = (part.strip() for part in copula.groups())
+        if usable(term) and usable_definition(definition):
+            return term, f"What is {term}?", definition
+    definition = re.fullmatch(r"([A-Za-z][A-Za-z -]{2,40})\s*=\s*([A-Za-z].{8,140})", text)
+    if definition:
+        term, answer = (part.strip() for part in definition.groups())
+        if usable(term) and usable_definition(answer):
+            return term, f"What is {term}?", answer
+    return None
 
 
 def _citation(chunk: Chunk, evidence_id: str) -> EvidenceCitation:
@@ -377,11 +528,18 @@ def _citation(chunk: Chunk, evidence_id: str) -> EvidenceCitation:
 def _formula_evidence(chunks: list[Chunk]) -> list[tuple[str, tuple[str, ...], Chunk]]:
     results = []
     seen = set()
-    math_pattern = re.compile(r"(?:=|≤|≥|≈|→|∑|Σ|Π|λ|γ|θ|α|β|\^|√)")
+    relation_pattern = re.compile(r"(?:=|≤|≥|≈|→|∈)")
+    structure_pattern = re.compile(
+        r"(?:[A-Za-zͰ-Ͽ][A-Za-z0-9_*'Ͱ-Ͽ]*\s*\([^)]*\)\s*=|"
+        r"(?:min|max|sum|argmin|argmax|O|Θ|Ω)\s*\(|∑|Σ|Π|√|\^|\|[^|]+\|)"
+    )
     for chunk in chunks:
-        for raw in re.split(r"[§\n▪•■]+", chunk.text):
-            text = re.sub(r"\s+", " ", raw).strip()
-            if not (3 <= len(text) <= 240 and math_pattern.search(text)):
+        for text in _study_units(chunk.text):
+            if not (
+                3 <= len(text) <= 240
+                and relation_pattern.search(text)
+                and structure_pattern.search(text)
+            ):
                 continue
             key = text.casefold()
             if key in seen:
@@ -394,3 +552,49 @@ def _formula_evidence(chunks: list[Chunk]) -> list[tuple[str, tuple[str, ...], C
             )
             results.append((text, symbols, chunk))
     return results
+
+
+def _study_units(text: str) -> list[str]:
+    """Keep bullet boundaries while joining lowercase PDF line wraps."""
+    lines = [line.strip() for line in text.replace("§", "\n").splitlines() if line.strip()]
+    units: list[str] = []
+    current = ""
+    for raw in lines:
+        is_bullet = bool(re.match(r"^[▪•■\-–—]|^\d+[.)]\s", raw))
+        line = re.sub(r"^[\s•▪■\-–—]+", "", raw).strip()
+        if not line:
+            continue
+        if current and not is_bullet and line[0].islower() and not re.search(r"[.!?。！？:]$", current):
+            current = f"{current} {line}"
+            continue
+        if current:
+            units.extend(_split_study_sentences(current))
+        current = line
+    if current:
+        units.extend(_split_study_sentences(current))
+    return units
+
+
+def _split_study_sentences(text: str) -> list[str]:
+    results = []
+    for part in re.split(r"(?<=[.!?。！？])(?=\s+[A-Z㐀-鿿])", text):
+        normalized = re.sub(r"\s+", " ", part).strip()
+        if not normalized:
+            continue
+        # PDF diagrams often append isolated node labels ("a s s, a s,a,s’")
+        # to an otherwise useful text line. They are layout debris, not prose.
+        normalized = re.sub(
+            r"\s+(?:[A-Za-z](?:\s+|,\s*)){5,}[A-Za-z][’']?$",
+            "",
+            normalized,
+        ).strip()
+        if normalized:
+            results.append(normalized)
+    return results
+
+
+def _looks_like_title(text: str) -> bool:
+    if len(text) > 70 or re.search(r"[:;.!?=。！？]", text):
+        return False
+    words = re.findall(r"[A-Za-z][A-Za-z0-9-]*", text)
+    return 1 <= len(words) <= 8 and all(word[0].isupper() or word.isupper() for word in words)
