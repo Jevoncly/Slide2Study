@@ -82,6 +82,17 @@ class OfflineStudyGuideTests(unittest.TestCase):
 
         self.assertEqual([item.text for item in guide.summary], [chunks[0].text])
 
+    def test_summary_excludes_ellipsis_and_truncated_content(self):
+        chunks = [
+            passage("c1", 3, "A complete definition includes all required conditions."),
+            passage("c2", 4, "The optimal path has…"),
+            passage("c3", 5, "A recurrence may reference f(x,...) in truncated source text."),
+        ]
+
+        guide = build_chapter_study_guide(chunks, summary_bullets=3, flashcard_count=1)
+
+        self.assertEqual([item.text for item in guide.summary], [chunks[0].text])
+
     def test_extracts_concepts_and_formula_evidence(self):
         chunks = [
             passage(

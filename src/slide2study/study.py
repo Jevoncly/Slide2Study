@@ -316,6 +316,7 @@ def _build_candidates(chunks: list[Chunk]) -> list[_Candidate]:
                 or re.match(r"^\d+\s+(?:def|return|if|for|while)\b", key)
                 or re.match(r"^(?:only if|\[?demo\b)", key)
                 or text.endswith(":")
+                or re.search(r"\.{2,}|[‥…⋯]", text)
                 or re.search(r"[a-z][A-Z]", text)
                 or re.search(r"\s[A-Z]$", text)
                 or re.search(r"\b(?:a|an|and|as|been|for|from|if|in|of|on|or|that|the|to|when|which|with)$", key)
