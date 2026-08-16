@@ -323,6 +323,17 @@ multimodal page retriever。
 - 以上 test 结果只用于最终报告，不据此调整模型、路由或 candidate-k。后续改进必须在
   train/dev 建立并冻结后，才能再用新的独立 test 验证。
 
+### 3.23 视觉 dev 扩充候选
+
+- 新增可复现脚本 `scripts/build_public_visual_dev_expansion.py`，从正式 66 条数据未使用的页面
+  构建 12 条视觉重型 dev 候选：table/chart 6 条、visual-only 6 条。
+- 12 条覆盖 Search 与 MDP 各 6 条，共引用 14 个互不属于现有标注的证据页；已逐页检查问题、
+  答案提示和渲染图，严格数据校验通过。
+- 候选文件为 `data/public_course_visual_dev_candidates.jsonl`，当前仍为 `candidate`，没有合并
+  进入正式数据，也没有用于选择模型或路由。
+- 本地人工审阅包为 `artifacts/visual_dev_human_review/index.html`：12 条、14 张证据图、缺图 0，
+  初始状态 0/12。只有完成独立确认后，才扩大 dev 并重跑 Dense、CLIP、Dense+CLIP 与题型路由。
+
 ## 4. 验证证据
 
 ### 4.1 自动化测试
@@ -421,8 +432,8 @@ slide2study build-negative-review-pack artifacts\course_chunks.jsonl artifacts\b
 
 1. 保持 Dense 为默认检索器，将 Reranker 记录为“dev 提升、扩充 test 未复现”的失败消融；
    不得围绕当前 test 调模型或 candidate-k。
-2. 下一轮只在 train/dev 改善视觉候选召回：扩充 table/chart 与 visual-only 的开发样本，比较
-   已有 CLIP、Dense+CLIP 和题型路由，并先冻结方案。
+2. 完成 12 条视觉 dev 候选的独立确认；合并后比较已有 CLIP、Dense+CLIP 和题型路由，并在
+   扩充 dev 上冻结方案。
 3. 为下一轮改进另建未查看的独立 test；验证通过后再接带引用生成。
 
 短期最重要的不是继续堆功能，而是先获得可信的评测集和 baseline 数字。

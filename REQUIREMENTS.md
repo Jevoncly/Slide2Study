@@ -262,5 +262,5 @@ Slide2Study 是一个面向算法工程师求职展示的多模态、结构感�
 8. 实现带引用生成
 9. 完成 UI、实验报告和项目展示
 
-当前下一项：将人工 dev 扩充到至少 30 条并补充 table/chart、visual-only 类型；随后只在
-dev 上验证 Reranker 和题型感知融合，再冻结更大的人工 test。
+当前下一项：完成新增 12 条 table/chart、visual-only dev 候选的独立确认；合并后只在扩充
+dev 上比较 CLIP、Dense+CLIP 和题型感知路由。现有 18 条 test 已冻结，不得据此调参。
