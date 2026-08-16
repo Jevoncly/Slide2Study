@@ -245,7 +245,7 @@ def build_chapter_study_guide(
             formula_text=text,
             symbols=symbols,
             citation=_citation(chunk, f"M{index}"),
-            explanation_text=_formula_explanation(text),
+            explanation_text=_formula_explanation(text, chunk),
         )
         for index, (text, symbols, chunk) in enumerate(
             _formula_evidence(evidence_chunks)[:formula_count], 1
@@ -612,46 +612,23 @@ def _formula_evidence(chunks: list[Chunk]) -> list[tuple[str, tuple[str, ...], C
     return results
 
 
-def _formula_explanation(text: str) -> str | None:
-    """Return only an explicit natural-language explanation embedded in the formula line."""
-    cue_pattern = re.compile(
-        r"\b(?:action|array|cost|expected|function|length|maximum|minimum|number|optimal|"
-        r"path|probability|reward|sorted|state|subsequence|sum|time|transition|utility|weight)\b",
-        re.IGNORECASE,
-    )
-    candidates = []
-    equals_at = text.find("=")
-    colon_at = text.find(":")
-    if equals_at >= 0 and colon_at > equals_at:
-        candidates.append(text[colon_at + 1 :].strip())
-    if equals_at >= 0:
-        candidates.append(text[equals_at + 1 :].strip())
-    if colon_at >= 0:
-        candidates.append(text[:colon_at].strip())
-    seen = set()
-    for candidate in candidates:
-        candidate = candidate.strip(" .;:")
-        if re.search(r"(?:\s+[A-Za-z]){2,}$", candidate):
+def _formula_explanation(text: str, chunk: Chunk) -> str | None:
+    """Extract a distinct neighboring source label, never duplicate the formula RHS."""
+    units = _study_units(chunk.text)
+    formula_index = next((index for index, unit in enumerate(units) if unit == text), None)
+    if formula_index is None:
+        return None
+    for candidate in reversed(units[max(0, formula_index - 2) : formula_index]):
+        if not candidate.endswith(":"):
             continue
-        candidate = _clean_candidate_text(candidate).strip(" .;:")
-        key = candidate.casefold()
-        words = re.findall(r"[A-Za-z]{2,}", candidate)
+        explanation = _clean_candidate_text(candidate).strip(" .;:")
+        words = re.findall(r"[A-Za-z]{2,}", explanation)
         if (
-            key in seen
-            or not 4 <= len(words) <= 35
-            or not cue_pattern.search(candidate)
-            or re.search(r"\.{2,}|[‥…⋯]", candidate)
-            or candidate.count("=") > 1
-            or len(re.findall(r"(?:=|≤|≥|≈|→|∈)", candidate)) > 1
-            or any(
-                candidate.count(left) != candidate.count(right)
-                for left, right in (("(", ")"), ("[", "]"), ("{", "}"))
-            )
-            or re.search(r"\b(?:and|are|for|from|is|of|or|the|to|with)$", key)
+            3 <= len(words) <= 20
+            and not re.search(r"(?:=|≤|≥|≈|→|∈|\.{2,}|[‥…⋯])", explanation)
+            and explanation.casefold() not in text.casefold()
         ):
-            continue
-        seen.add(key)
-        return candidate
+            return explanation
     return None
 
 

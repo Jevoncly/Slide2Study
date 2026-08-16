@@ -313,7 +313,7 @@ _HTML = """<!doctype html>
         symbols.textContent = item.symbols.length ? `检测到的符号：${item.symbols.join('、')}（含义需以课件原文为准）` : '未自动拆出独立符号；保留公式原文。';
         const explanation = document.createElement('p');
         explanation.className = 'formula-explanation';
-        explanation.textContent = item.explanation_text ? `课件原文解释：${item.explanation_text}` : '本页未提供可可靠抽取的文字解释。';
+        explanation.textContent = item.explanation_text ? `课件相邻说明：${item.explanation_text}` : '未找到独立于公式原文的可靠说明。';
         card.append(formula, explanation, symbols, citationButton(item.citation));
         list.append(card);
       });

@@ -35,7 +35,7 @@ class StudyReviewTests(unittest.TestCase):
             data = json.loads(html.split('id="review-data">', 1)[1].split("</script>", 1)[0])
             self.assertEqual(data["records"][0]["review_id"], "study-review-001")
             self.assertIn("导出 JSONL", html)
-            self.assertIn("课件原文解释", html)
+            self.assertIn("课件相邻说明", html)
             self.assertIn("基础题", html)
             self.assertIn("questions", data["records"][0])
             self.assertTrue((root / "review" / data["page_assets"]["deck:2"]).is_file())

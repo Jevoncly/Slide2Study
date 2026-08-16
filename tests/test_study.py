@@ -160,6 +160,7 @@ class OfflineStudyGuideTests(unittest.TestCase):
             passage(
                 "c1",
                 3,
+                "The value utility of a state:\n"
                 "V*(s) = expected utility starting in state s and acting optimally.",
             ),
             passage("c2", 4, "V(s) = max_a Q(s,a)."),
@@ -175,9 +176,9 @@ class OfflineStudyGuideTests(unittest.TestCase):
         self.assertEqual(
             [item.explanation_text for item in guide.formulas],
             [
-                "expected utility starting in state s and acting optimally",
+                "The value utility of a state",
                 None,
-                "optimal action from state s",
+                None,
             ],
         )
         self.assertEqual(guide.formulas[2].formula_text, "π*(s) = optimal action from state s")
