@@ -163,15 +163,24 @@ class OfflineStudyGuideTests(unittest.TestCase):
                 "V*(s) = expected utility starting in state s and acting optimally.",
             ),
             passage("c2", 4, "V(s) = max_a Q(s,a)."),
-            passage("c3", 5, "π*(s) = optimal action from state s a s."),
+            passage(
+                "c3",
+                5,
+                "π*(s) = optimal action from state s\na\ns\n’s\ns, a\n(s,a,s’) is a transition",
+            ),
         ]
 
         guide = build_chapter_study_guide(chunks, summary_bullets=2, flashcard_count=1)
 
         self.assertEqual(
             [item.explanation_text for item in guide.formulas],
-            ["expected utility starting in state s and acting optimally", None, None],
+            [
+                "expected utility starting in state s and acting optimally",
+                None,
+                "optimal action from state s",
+            ],
         )
+        self.assertEqual(guide.formulas[2].formula_text, "π*(s) = optimal action from state s")
 
     def test_builds_all_viable_sections_for_course_ui(self):
         chunks = [

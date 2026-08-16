@@ -667,7 +667,13 @@ def _study_units(text: str) -> list[str]:
         line = re.sub(r"^[\s•▪■\-–—]+", "", raw).strip()
         if not line:
             continue
-        if current and not is_bullet and line[0].islower() and not re.search(r"[.!?。！？:]$", current):
+        if (
+            current
+            and not is_bullet
+            and len(line) > 1
+            and line[0].islower()
+            and not re.search(r"[.!?。！？:]$", current)
+        ):
             current = f"{current} {line}"
             continue
         if current:
