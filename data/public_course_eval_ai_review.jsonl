@@ -28,3 +28,27 @@
 {"id":"public-mdp-008","reviewer_type":"ai","decision":"approved_no_change","note":"第51页包含初始化、逐状态备份和每轮复杂度。"}
 {"id":"public-mdp-009","reviewer_type":"ai","decision":"approved_after_revision","note":"第26页给出两种评估方法；将第23页替换为第22页，以直接支持固定策略每状态只有一个动作、无需max。"}
 {"id":"public-mdp-010","reviewer_type":"ai","decision":"approved_after_revision","note":"第47页已完整说明评估、改进和停止条件，第49页为冗余比较页，删除并改为text。"}
+{"id":"public-dp-011","reviewer_type":"ai","decision":"approved_no_change","note":"第2页完整给出归并排序的SRT BOT分解，并明确其依赖图是分治树。"}
+{"id":"public-dp-012","reviewer_type":"ai","decision":"approved_no_change","note":"第3页同时说明n+1个子问题与大整数加法造成的位复杂度，问题和答案一致。"}
+{"id":"public-dp-013","reviewer_type":"ai","decision":"approved_no_change","note":"第2至3页共同覆盖LCS状态数量、时间复杂度和父指针重建，跨页标注正确。"}
+{"id":"public-dp-014","reviewer_type":"ai","decision":"approved_no_change","note":"第4页给出受首元素约束的LIS递推，第5页给出二次时间分析，跨页证据完整。"}
+{"id":"public-dp-015","reviewer_type":"ai","decision":"approved_no_change","note":"第7页明确将轮次加入状态，并给出双方分别max和min的常数工作递推。"}
+{"id":"public-dp-016","reviewer_type":"ai","decision":"approved_no_change","note":"第4页用负数乘法例子解释为何子表达式必须同时保留最小值和最大值。"}
+{"id":"public-dp-017","reviewer_type":"ai","decision":"approved_no_change","note":"第5页说明原状态信息不足，第6页补充起始手指状态并给出Theta(nF^2)复杂度。"}
+{"id":"public-dp-018","reviewer_type":"ai","decision":"approved_no_change","note":"第7页直接给出吉他弦数替换和多音符情况下的状态规模与时间复杂度。"}
+{"id":"public-search-011","reviewer_type":"ai","decision":"approved_no_change","note":"第22、24、25页共同说明状态图唯一状态、搜索树重复计划以及树节点对应图中路径。"}
+{"id":"public-search-012","reviewer_type":"ai","decision":"approved_no_change","note":"第37页完整列出DFS的时间、空间、完备性和最优性性质。"}
+{"id":"public-search-013","reviewer_type":"ai","decision":"approved_no_change","note":"第40页完整列出BFS在浅层解深度s下的四项性质。"}
+{"id":"public-search-014","reviewer_type":"ai","decision":"approved_no_change","note":"第43页解释逐步加深的运行方式、空间优势及重复工作的摊薄原因。"}
+{"id":"public-search-015","reviewer_type":"ai","decision":"approved_no_change","note":"第43页明确指出可用放宽问题构造可采纳启发式，答案给出下界原因。"}
+{"id":"public-search-016","reviewer_type":"ai","decision":"approved_no_change","note":"已逐页检查第45至46页表格，TILES与MANHATTAN在4、8、12步下的数据均与答案一致。"}
+{"id":"public-search-017","reviewer_type":"ai","decision":"approved_no_change","note":"第49页直接定义启发式支配，并说明可采纳启发式的最大值仍可采纳。"}
+{"id":"public-search-018","reviewer_type":"ai","decision":"approved_no_change","note":"已检查第56页状态图与搜索树，较差C先关闭及更便宜路径重开后需重算后代的描述准确。"}
+{"id":"public-mdp-011","reviewer_type":"ai","decision":"approved_no_change","note":"已检查第8页Grid World图与文字，North的0.8、0.1、0.1结果及撞墙原地规则一致。"}
+{"id":"public-mdp-012","reviewer_type":"ai","decision":"approved_no_change","note":"已检查第15页Racing状态图，Cool、Warm、Overheated及Slow/Fast转移、奖励标注与答案一致。"}
+{"id":"public-mdp-013","reviewer_type":"ai","decision":"approved_no_change","note":"第17页完整标注MDP搜索树中的状态、q-state、转移概率和奖励语义。"}
+{"id":"public-mdp-014","reviewer_type":"ai","decision":"approved_no_change","note":"已检查第23页折扣网格图，较小gamma偏向近处小奖励、gamma接近1保留远处大奖励的解释正确。"}
+{"id":"public-mdp-015","reviewer_type":"ai","decision":"approved_no_change","note":"第19页分别说明有限最大深度和gamma小于1时的收敛理由。"}
+{"id":"public-mdp-016","reviewer_type":"ai","decision":"approved_no_change","note":"已对照第28至29页V与Q网格快照，状态值和固定首动作值的区分准确。"}
+{"id":"public-mdp-017","reviewer_type":"ai","decision":"approved_no_change","note":"第49页直接比较价值迭代的每轮隐式策略更新与策略迭代的分阶段更新。"}
+{"id":"public-mdp-018","reviewer_type":"ai","decision":"approved_no_change","note":"第53页定义已知模型的离线规划，第58页说明未知模型下需交互学习、探索、采样和承担遗憾。"}

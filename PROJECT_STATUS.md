@@ -213,22 +213,26 @@ multimodal page retriever。
 - 现有 `ingest-corpus` 已实测导入全部 22 份 PDF：328 页、935 个 chunk、失败 0。
 - 原始文件、OpenDSA 稀疏源码和解析产物位于被 Git 忽略的 `data/raw/`、`artifacts/`；公开
   仓库只保留清单、下载脚本和许可说明。
-- 已建立并人工复核 30 条公开检索记录：MIT DP、Berkeley Search、Berkeley MDP 各 10 条；
-  train/dev/test 为 18/6/6，text/formula/cross-page/visual-only 为 17/9/3/1。
-- 人工结果为 30/30 条 `verified`；18 条 train、6 条 dev 和 6 条 test 已全部通过，严格数据
-  校验通过。正式文件为 `data/public_course_eval_reviewed.jsonl`。
+- 已建立 54 条公开检索记录：原 30 条由人工复核，新增 24 条 dev 由 Codex 逐条检查文本证据，
+  并逐页检查所有新增视觉题；`reviewer_type` 区分 30 条 `human` 与 24 条 `ai`。
+- train/dev/test 为 18/30/6，text/formula/cross-page/table-chart/visual-only 为 25/14/8/2/5；
+  54/54 条均为 `verified`，严格数据校验通过。正式文件为
+  `data/public_course_eval_reviewed.jsonl`。
 - 评测语料已收紧为 7 份纯课件、256 页、566 个层级 chunk（253 个 passage）；复习资料只用作
   问题来源，不参与检索，避免 discussion 或答案文件泄漏。
-- 人工复核 dev：BM25 Recall@5/MRR/nDCG@5 为 1.000/0.622/0.712，Dense 为
-  0.833/0.597/0.655，BM25+Dense RRF 为 0.833/0.597/0.655。
+- 扩充 dev（30 条）：BM25 Recall@5/MRR/nDCG@5 为 0.867/0.596/0.647，Dense 为
+  0.967/0.806/0.836，BM25+Dense 固定权重 RRF 为 0.933/0.756/0.796；Dense 单路继续领先。
+- table/chart 两条在 BM25 下 Recall@5 为 0，在 Dense 下均命中；扩充集已能暴露原 6 条 dev
+  看不到的题型差异。
 - 人工复核 test：BM25 为 1.000/0.514/0.597，Dense 为 1.000/0.917/0.925，RRF 为
   1.000/0.833/0.887。正式报告明确引用 reviewed 数据；样本仅 6 条，仍不得根据 test 调权重。
 - 两个本机 Poppler 入口仍不可用；新增并实测 PyMuPDF 回退路径，7/7 份课件共 256 页均成功
   渲染，页面清单的 SHA-256 校验有效。
-- 审阅包修正后包含 30 条记录和 35 个证据页图片，缺失 0；35/35 个证据页均已逐页检查，未发现
-  裁切、模糊或页面错配。
-- AI 语义复核结果为 23 条无需修改、7 条修正后通过、0 条拒绝；完整理由保存在
-  `data/public_course_eval_ai_review.jsonl`。修正项已同步到生成脚本，重建数据不会回退。
+- 审阅包现包含 54 条记录、67 个证据页引用和 64 张去重图片，缺失 0；新增 visual-only 与
+  table/chart 证据已逐页检查，未发现裁切、模糊或页面错配。
+- AI 语义复核日志现覆盖 54 条；原 30 条中 23 条无需修改、7 条修正后通过，新增 24 条均在
+  构建时通过。完整理由保存在 `data/public_course_eval_ai_review.jsonl`，生成脚本可同时重建
+  candidate 与 reviewed 数据，避免后续回退。
 - 人工备注使用 `review_notes` 字段；内容对应 `public-search-003` 和 `public-search-005`，导出时
   误落在同编号的 DP 记录。现已恢复两条 DP 记录，并将决定和备注迁移到正确的 Search 记录；
   两条 Search train 已按备注修正并完成人工确认。
@@ -282,9 +286,9 @@ python -m unittest discover -s tests -v
 - 当前 Torch 为 CPU 版本；真实 CLIP 可以运行，但页面首次编码速度尚未获得 GPU 加速。
 - 当前机器没有 LibreOffice；PPTX 转换路径已由自动化测试覆盖，但只对 PDF 做过真实渲染。
 - 已有四门课 28 条机器辅助候选 QA，但尚未人工复核，不能作为正式测试集或可靠消融结论。
-- BM25 + CLIP 和 BM25 + Dense RRF 均已实现；首批人工 test 上 RRF 仍未超过 Dense 单路。
-  当前人工 dev/test 各只有 6 条，Dense 的高指标不能视为稳定泛化结论。尚未实现可靠的题型
-  感知融合、有效的 Reranker 提升和多模态对比学习。
+- BM25 + CLIP 和 BM25 + Dense RRF 均已实现；30 条扩充 dev 与首批人工 test 上，固定权重
+  RRF 都未超过 Dense 单路。新增 24 条 dev 为 AI 复核，正式对外结论前仍应做独立人工抽查；
+  人工 test 仍只有 6 条。尚未实现可靠的题型感知融合、有效的 Reranker 提升和多模态对比学习。
 - 尚未实现带引用答案、笔记、闪卡、题库和 UI。
 - 视觉页数量较多；后续需要通过标注集校准视觉风险阈值，而不是只依赖启发式规则。
 
@@ -327,8 +331,8 @@ slide2study build-negative-review-pack artifacts\course_chunks.jsonl artifacts\b
 
 ## 7. 推荐的下一阶段
 
-1. 将人工 dev 扩充到至少 30 条，并补充 table/chart 与更多 visual-only 问题。
-2. 只用扩充后的 dev 验证题型感知门控，避免 CLIP 降低文本题和跨页题排序。
+1. 只用 30 条扩充 dev 验证题型感知门控，避免 CLIP 降低文本题和跨页题排序。
+2. 对新增 24 条 AI 复核 dev 做独立人工抽查，再冻结用于正式模型选择的版本。
 3. 使用复核后的 triplet 微调 Reranker，比较能否在不损害 Dense 首位命中的前提下改善困难查询。
 4. 扩充并冻结人工 test 后完成消融，再接带引用生成。
 
