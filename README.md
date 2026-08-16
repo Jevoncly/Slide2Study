@@ -31,6 +31,7 @@ slide2study validate-dataset examples/retrieval_eval.jsonl --strict
 slide2study evaluate artifacts/sample_chunks.jsonl examples/retrieval_eval.jsonl --split test --top-k 3 --strict-dataset --output artifacts/bm25_report.json
 slide2study build-review-pack artifacts/course_chunks.jsonl data/private/eval.jsonl --output artifacts/review/index.html --manifests artifacts/pages/*.jsonl
 slide2study build-review-pack artifacts/course_chunks.jsonl data/private/eval.jsonl --output artifacts/ai_dev_review/index.html --manifests artifacts/pages/*.jsonl --split dev --reviewer-type ai --reset-review-state --verified-reviewer-type human
+python scripts/build_public_test_expansion.py artifacts/public_courseware_chunks.jsonl data/public_course_eval_reviewed.jsonl --output data/public_course_test_expansion_candidates.jsonl
 slide2study mine-negatives artifacts/sample_chunks.jsonl examples/retrieval_eval.jsonl --output artifacts/train_triplets.jsonl
 ```
 

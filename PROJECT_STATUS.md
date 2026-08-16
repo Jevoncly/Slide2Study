@@ -297,6 +297,18 @@ multimodal page retriever。
 - 退化集中在唯一 cross-page 测试题 `public-mdp-009`：首个相关结果由第 1 名降至第 2 名；
   formula、text、visual-only 的 test MRR 未改变。由于 test 仅 6 条，不据此调整任何参数。
 
+### 3.21 人工 test 扩充候选
+
+- 新增可复现脚本 `scripts/build_public_test_expansion.py`，只从现有 54 条未使用的课件证据页
+  构建候选，并检查 ID、页面存在性、单文档范围及证据页不重叠。
+- 当前扩充候选 12 条：cross-page 4、table/chart 4、visual-only 4，全部为 `candidate`，尚未
+  进入正式 test，也未用于任何模型或参数选择。
+- 已逐页检查 17 个证据页图像；本地审阅包
+  `artifacts/test_expansion_human_review/index.html` 包含 12 条、17 张图片，缺图 0，初始状态
+  为 0/12。
+- 候选文件为 `data/public_course_test_expansion_candidates.jsonl`；只有人工确认后才与正式
+  reviewed 数据合并，并重新运行一次冻结消融。
+
 ## 4. 验证证据
 
 ### 4.1 自动化测试
