@@ -348,16 +348,22 @@ multimodal page retriever。
 - 当前 2 条未召回为 `public-search-024`（table/chart）和 `public-mdp-029`（visual-only）。本轮
   只用 dev 选路由，未再次运行或检查现有 18 条 test。
 
-### 3.25 独立视觉路由 holdout 候选
+### 3.25 独立视觉路由 holdout
 
 - 新增 `scripts/build_public_visual_holdout.py`，从正式 78 条数据未使用的证据页构建独立候选，
   同时拒绝与正式数据重叠、候选内部复用页面、重复 ID 和跨文档标注。
-- 当前 holdout 候选 15 条，text、formula、cross-page、table/chart、visual-only 各 3 条；共
+- holdout 共 15 条，text、formula、cross-page、table/chart、visual-only 各 3 条；共
   20 个证据页，全部逐页检查问题、答案提示和渲染结果，缺图 0，严格数据校验通过。
 - 候选文件为 `data/public_course_visual_holdout_candidates.jsonl`，本地人工审阅包为
-  `artifacts/visual_holdout_human_review/index.html`。所有记录仍为 `candidate`，未合并正式数据。
-- 冻结路由尚未在该 holdout 上运行；只有完成独立人工确认后才允许执行一次最终评测，避免在
-  审阅或修订期间泄漏模型结果。
+  `artifacts/visual_holdout_human_review/index.html`。用户已确认 15/15 条正确；正式独立评测文件
+  `data/public_course_visual_holdout_reviewed.jsonl` 全部标记为 `human + verified`，候选文件继续
+  保留为审阅前审计记录。
+- 按事先冻结的配置仅运行一次 holdout：text→BM25、formula/cross-page→Dense、
+  table/chart/visual-only→CLIP。路由 Recall@5/MRR/nDCG@5 为 0.867/0.730/0.766，平均延迟
+  53.4 ms；CLIP 单路为 0.867/0.730/0.750，Dense 单路为 0.800/0.683/0.716。
+- 路由在该独立集上与最强单路 CLIP 保持相同 Recall 和 MRR，并取得更高 nDCG；相对 Dense
+  提高 Recall 0.067、MRR 0.047 和 nDCG 0.050。未召回项为 `public-search-034`
+  （table/chart）和 `public-mdp-038`（visual-only）。该结果只作最终验证，不据此调整路由。
 
 ## 4. 验证证据
 
@@ -458,7 +464,7 @@ slide2study build-negative-review-pack artifacts\course_chunks.jsonl artifacts\b
 1. 保持 Dense 为默认检索器，将 Reranker 记录为“dev 提升、扩充 test 未复现”的失败消融；
    不得围绕当前 test 调模型或 candidate-k。
 2. 题型路由已经在 42 条 dev 上冻结；不得再用现有 18 条已查看 test 验证或调参。
-3. 完成 15 条独立 holdout 候选的人工确认，再对冻结视觉路由运行一次最终评测；随后接带引用生成。
+3. 独立 holdout 已完成并验证冻结路由；停止围绕现有数据调检索参数，进入带引用生成的最小闭环。
 
 短期最重要的不是继续堆功能，而是先获得可信的评测集和 baseline 数字。
 

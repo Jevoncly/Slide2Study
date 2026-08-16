@@ -148,6 +148,11 @@ def main() -> int:
     parser.add_argument("corpus", type=Path)
     parser.add_argument("existing_dataset", type=Path)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--reviewed",
+        action="store_true",
+        help="Record the candidates as human-verified after review",
+    )
     args = parser.parse_args()
 
     chunks = [
@@ -192,8 +197,7 @@ def main() -> int:
         overlaps = sorted(page for page in candidate["pages"] if (document_id, page) in used_pages)
         if overlaps:
             raise ValueError(f"Candidate {candidate['id']} reuses labeled pages: {overlaps}")
-        records.append(
-            {
+        record = {
                 "id": candidate["id"],
                 "query": candidate["query"],
                 "document_id": document_id,
@@ -201,14 +205,16 @@ def main() -> int:
                 "relevant_chunk_ids": [chunk["chunk_id"] for chunk in selected],
                 "question_type": candidate["question_type"],
                 "split": "test",
-                "annotation_status": "candidate",
+                "annotation_status": "verified" if args.reviewed else "candidate",
                 "answer_hint": candidate["answer_hint"],
                 "pair_id": candidate["id"].split("-")[1],
                 "courseware_source": candidate["source_name"],
                 "review_sources": candidate["review_sources"],
                 "expansion_round": "visual-routing-holdout-v1",
             }
-        )
+        if args.reviewed:
+            record.update({"review_decision": "verified", "reviewer_type": "human"})
+        records.append(record)
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     args.output.write_text(
