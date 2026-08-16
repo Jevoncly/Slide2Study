@@ -162,6 +162,14 @@ function save() {{
   try {{ localStorage.setItem(storageKey, JSON.stringify(state)); }} catch {{ /* file mode */ }}
   render();
 }}
+function currentReview(record) {{
+  if (state[record.id]) return state[record.id];
+  return {{
+    decision: record.review_decision ||
+      (record.annotation_status === "verified" ? "verified" : "unreviewed"),
+    notes: record.review_notes || ""
+  }};
+}}
 function element(tag, className, text) {{
   const value = document.createElement(tag); if (className) value.className = className;
   if (text !== undefined) value.textContent = text; return value;
@@ -169,7 +177,7 @@ function element(tag, className, text) {{
 function render() {{
   cards.replaceChildren(); let visible = 0;
   payload.examples.forEach(item => {{
-    const record = item.record; const review = state[record.id] || {{}};
+    const record = item.record; const review = currentReview(record);
     const decision = review.decision || "unreviewed";
     if (typeFilter.value && record.question_type !== typeFilter.value) return;
     if (splitFilter.value && record.split !== splitFilter.value) return;
@@ -204,19 +212,19 @@ function render() {{
       decision: select.value}}; save(); }};
     const notes = document.createElement("textarea"); notes.placeholder = "复核备注或修改建议";
     notes.value = review.notes || ""; notes.onchange = () => {{
-      state[record.id] = {{...(state[record.id] || {{}}), notes: notes.value}}; save(); }};
+      state[record.id] = {{...review, notes: notes.value}}; save(); }};
     controls.append(select, notes); card.appendChild(controls); cards.appendChild(card);
   }});
   if (!visible) cards.appendChild(element("div", "empty", "没有符合筛选条件的记录。"));
-  const reviewed = payload.examples.filter(item => state[item.record.id]?.decision &&
-    state[item.record.id].decision !== "unreviewed").length;
+  const reviewed = payload.examples.filter(item =>
+    currentReview(item.record).decision !== "unreviewed").length;
   document.getElementById("progress").textContent =
     `已复核 ${{reviewed}} / ${{payload.examples.length}}`;
 }}
 [typeFilter, splitFilter, decisionFilter].forEach(select => select.onchange = render);
 document.getElementById("exportButton").onclick = () => {{
   const rows = payload.examples.map(item => {{
-    const record = {{...item.record}}; const review = state[record.id] || {{}};
+    const record = {{...item.record}}; const review = currentReview(record);
     record.review_decision = review.decision || "unreviewed";
     if (review.notes) record.review_notes = review.notes;
     if (review.decision === "verified") record.annotation_status = "verified";

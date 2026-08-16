@@ -942,6 +942,8 @@ class BaselineTests(unittest.TestCase):
         self.assertEqual(len(copied), 1)
         self.assertIn("Slide2Study QA 人工复核", html)
         self.assertIn("导出复核 JSONL", html)
+        self.assertIn("function currentReview(record)", html)
+        self.assertIn("record.review_notes", html)
 
     @unittest.skipUnless(importlib.util.find_spec("PIL"), "Pillow is not installed")
     def test_pdf_renderer_writes_stable_page_mapping(self):

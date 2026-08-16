@@ -132,13 +132,15 @@ slide2study build-review-pack artifacts/public_courseware_chunks.jsonl `
   data/public_course_eval_candidates.jsonl --output artifacts/public_course_review/index.html
 ```
 
-当前 30 条记录全部为 `candidate`：train/dev/test 为 18/6/6，AI 语义复核后题型包含 17 条
-text、9 条 formula、3 条 cross-page 和 1 条 visual-only。PDF 回退渲染已覆盖 7 份课件的
-256 页；审阅包中的 33 个证据页
-图片全部存在，且已逐页检查清晰度、裁切和页面对应关系。视觉材料已具备人工标注条件，但
-只有人工确认问题、答案提示与证据页的语义对应后，才能将记录改为 `verified` 并作为正式
-测试集使用。AI 复核记录保存在 `data/public_course_eval_ai_review.jsonl`：23 条无需修改，7 条
-已修正证据页或题型，0 条拒绝。
+30 条记录已完成人工复核并保存为 `data/public_course_eval_reviewed.jsonl`，全部为 `verified`；
+train/dev/test 为 18/6/6。题型包含 17 条 text、9 条 formula、3 条 cross-page 和 1 条
+visual-only。PDF
+回退渲染覆盖 7 份课件的 256 页，修正后审阅包中的 35 个证据页图片全部存在并完成视觉检查。
+此前的 AI 复核记录保存在 `data/public_course_eval_ai_review.jsonl`，可用于追溯修改理由。
+
+人工数据上的 Recall@5/MRR/nDCG@5：dev 中 BM25 为 1.000/0.622/0.712，Dense 与固定权重
+RRF 均为 0.833/0.597/0.655；test 中 BM25 为 1.000/0.514/0.597，Dense 为
+1.000/0.917/0.925，RRF 为 1.000/0.833/0.887。当前样本仍很小，不应围绕 test 调参。
 
 ## 评测集格式
 

@@ -132,7 +132,7 @@ CANDIDATES = [
         "pages": [30, 31],
         "question_type": "cross_page",
         "split": "train",
-        "answer_hint": "The fringe contains generated but unexpanded nodes; strategies differ in which fringe node is expanded next.",
+        "answer_hint": "The fringe contains partial plans under consideration; exploration strategies differ in which fringe node they expand next.",
         "review_sources": ["discussion-01.pdf", "discussion-01-solutions.pdf"],
     },
     {
@@ -149,7 +149,7 @@ CANDIDATES = [
         "id": "public-search-005",
         "query": "How can DFS, BFS, and UCS share one search implementation while using different fringe behavior?",
         "source_name": "lecture-02-search.pdf",
-        "pages": [46, 49],
+        "pages": [34, 39, 46, 49],
         "question_type": "cross_page",
         "split": "train",
         "answer_hint": "Treat the fringe as a priority abstraction: DFS uses a stack, BFS a queue, and UCS orders by path cost.",

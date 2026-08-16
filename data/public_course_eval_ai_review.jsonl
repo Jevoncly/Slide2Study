@@ -10,9 +10,9 @@
 {"id":"public-dp-010","reviewer_type":"ai","decision":"approved_no_change","note":"第3页完整覆盖Floyd-Warshall状态、递推和三次复杂度。"}
 {"id":"public-search-001","reviewer_type":"ai","decision":"approved_no_change","note":"第14页逐项定义搜索问题并给出解的定义。"}
 {"id":"public-search-002","reviewer_type":"ai","decision":"approved_no_change","note":"第20页直接列出Safe Passage状态所需四类信息。"}
-{"id":"public-search-003","reviewer_type":"ai","decision":"approved_after_revision","note":"原第31页只说明探索策略问题；补入第30页的fringe定义，并改为cross_page。"}
+{"id":"public-search-003","reviewer_type":"ai","decision":"approved_after_revision","note":"原第31页只说明探索策略问题；补入第30页的fringe定义、改为cross_page，并按人工备注将答案改为证据原词。"}
 {"id":"public-search-004","reviewer_type":"ai","decision":"approved_no_change","note":"第47页直接给出UCS扩展范围、完备性和最优性条件。"}
-{"id":"public-search-005","reviewer_type":"ai","decision":"approved_after_revision","note":"原第49页缺少UCS累计路径代价；补入第46页并改为cross_page。"}
+{"id":"public-search-005","reviewer_type":"ai","decision":"approved_after_revision","note":"补入第34页DFS LIFO stack、第39页BFS FIFO queue和第46页UCS累计路径代价，并改为cross_page。"}
 {"id":"public-search-006","reviewer_type":"ai","decision":"approved_no_change","note":"第16页直接定义启发式并说明其问题特定性。"}
 {"id":"public-search-007","reviewer_type":"ai","decision":"approved_no_change","note":"第22页说明Greedy只按目标接近程度并展示次优和类DFS后果。"}
 {"id":"public-search-008","reviewer_type":"ai","decision":"approved_no_change","note":"第25页完整给出A*的f等于g加h及两部分含义。"}
