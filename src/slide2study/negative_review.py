@@ -19,7 +19,7 @@ TRIPLET_FIELDS = (
 
 
 def apply_negative_reviews(
-    rows: list[dict], *, require_complete: bool = True
+    rows: list[dict], *, require_complete: bool = True, pending_as_valid: bool = False
 ) -> tuple[list[dict], dict]:
     """Keep reviewed valid negatives and return canonical training triplets."""
     decisions = Counter()
@@ -40,7 +40,8 @@ def apply_negative_reviews(
         query = str(row.get("query", "")).strip()
         if query:
             query_count.add(query)
-        if decision != "valid_negative":
+        retain = decision == "valid_negative" or (pending_as_valid and decision == "pending")
+        if not retain:
             continue
         missing = [field for field in TRIPLET_FIELDS if row.get(field) in (None, "")]
         if missing:
@@ -49,7 +50,7 @@ def apply_negative_reviews(
             )
         triplets.append({field: row[field] for field in TRIPLET_FIELDS})
         retained_queries.add(query)
-    incomplete = decisions["pending"] + decisions["uncertain"]
+    incomplete = (0 if pending_as_valid else decisions["pending"]) + decisions["uncertain"]
     if require_complete and incomplete:
         raise ValueError(
             "Negative review is incomplete: "
@@ -64,6 +65,7 @@ def apply_negative_reviews(
         "difficulty_counts": dict(sorted(difficulty_counts.items())),
         "queries": len(query_count),
         "queries_retained": len(retained_queries),
+        "pending_as_valid": pending_as_valid,
     }
     return triplets, summary
 

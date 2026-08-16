@@ -5,6 +5,7 @@ import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 
 from slide2study.chunking import CHUNK_LEVELS, HierarchicalChunker
 from slide2study.dense import (
@@ -14,17 +15,22 @@ from slide2study.dense import (
 )
 from slide2study.evaluation import (
     DATASET_SPLITS,
+    QUESTION_TYPES,
     compare_page_retrievers,
     compare_retrievers,
     evaluate,
     evaluate_page_retrieval,
+    evaluate_routed_page_retrieval,
     validate_dataset,
 )
 from slide2study.fusion import (
     BM25PageRetriever,
+    ChunkPageRetriever,
     ReciprocalRankFusionChunkRetriever,
     ReciprocalRankFusionRetriever,
 )
+from slide2study.generation import ExtractiveAnswerBackend, GroundedAnswerGenerator
+from slide2study.generation_evaluation import evaluate_generation
 from slide2study.io import load_chunks, read_jsonl, write_jsonl
 from slide2study.negative_review import apply_negative_reviews, build_negative_review_pack
 from slide2study.parsing import build_parse_report, get_parser
@@ -32,10 +38,14 @@ from slide2study.reranking import (
     CrossEncoderReranker,
     RerankedRetriever,
     build_reranker_pairs,
+    build_reranker_validation_groups,
     train_cross_encoder,
 )
 from slide2study.retrieval import BM25Retriever, DenseRetriever
 from slide2study.review import build_review_pack
+from slide2study.study import build_chapter_study_guide, build_course_study_guides
+from slide2study.study_review import build_study_review_pack, stratified_section_sample
+from slide2study.study_ui import build_course_study_ui
 from slide2study.training import mine_hard_negatives
 from slide2study.vision import (
     SentenceTransformersCLIPEncoder,
@@ -63,6 +73,20 @@ def _parse_levels(value: str) -> set[str]:
         expected = ",".join(sorted(CHUNK_LEVELS))
         raise argparse.ArgumentTypeError(f"levels must be a comma-separated subset of: {expected}")
     return levels
+
+
+def _parse_route(value: str) -> tuple[str, str]:
+    if "=" not in value:
+        raise argparse.ArgumentTypeError("route must use QUESTION_TYPE=SYSTEM")
+    question_type, system = (part.strip() for part in value.split("=", 1))
+    if question_type not in QUESTION_TYPES:
+        expected = ",".join(sorted(QUESTION_TYPES))
+        raise argparse.ArgumentTypeError(f"route question type must be one of: {expected}")
+    systems = {"bm25_page", "dense_page", "clip_page", "dense_clip_rrf"}
+    if system not in systems:
+        expected = ",".join(sorted(systems))
+        raise argparse.ArgumentTypeError(f"route system must be one of: {expected}")
+    return question_type, system
 
 
 def _expand_paths(values: list[Path]) -> list[Path]:
@@ -175,6 +199,38 @@ def build_parser() -> argparse.ArgumentParser:
     hybrid_evaluation.add_argument("--split", choices=sorted(DATASET_SPLITS))
     hybrid_evaluation.add_argument("--output", type=Path)
 
+    type_aware = commands.add_parser(
+        "type-aware-evaluate",
+        help="Compare page retrievers and evaluate explicit question-type routing",
+    )
+    type_aware.add_argument("corpus", type=Path)
+    type_aware.add_argument("dataset", type=Path)
+    type_aware.add_argument("--manifests", nargs="+", type=Path, required=True)
+    type_aware.add_argument("--dense-cache", type=Path, required=True)
+    type_aware.add_argument("--visual-cache", type=Path, required=True)
+    type_aware.add_argument("--dense-model")
+    type_aware.add_argument("--visual-model")
+    type_aware.add_argument("--device")
+    type_aware.add_argument("--dense-batch-size", type=int, default=32)
+    type_aware.add_argument("--visual-batch-size", type=int, default=16)
+    type_aware.add_argument("--levels", type=_parse_levels, default={"passage"})
+    type_aware.add_argument("--top-k", type=int, default=5)
+    type_aware.add_argument("--candidate-k", type=int, default=50)
+    type_aware.add_argument("--diagnostic-k", type=int, default=10)
+    type_aware.add_argument("--rrf-k", type=int, default=60)
+    type_aware.add_argument("--dense-weight", type=float, default=1.0)
+    type_aware.add_argument("--visual-weight", type=float, default=1.0)
+    type_aware.add_argument(
+        "--route",
+        action="append",
+        type=_parse_route,
+        default=[],
+        metavar="QUESTION_TYPE=SYSTEM",
+        help="Override the default dense_page route for one question type",
+    )
+    type_aware.add_argument("--split", choices=sorted(DATASET_SPLITS))
+    type_aware.add_argument("--output", type=Path)
+
     dense_index = commands.add_parser(
         "dense-index", help="Encode text chunks once and save a verified vector cache"
     )
@@ -226,6 +282,95 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("--top-k", type=int, default=5)
     search.add_argument("--levels", type=_parse_levels, default=set(CHUNK_LEVELS))
 
+    answer = commands.add_parser(
+        "answer", help="Retrieve evidence and produce a page-cited extractive answer"
+    )
+    answer.add_argument("corpus", type=Path)
+    answer.add_argument("query")
+    answer.add_argument("--top-k", type=int, default=5)
+    answer.add_argument("--levels", type=_parse_levels, default={"passage"})
+    answer.add_argument("--retriever", choices=("bm25", "dense"), default="bm25")
+    answer.add_argument("--dense-cache", type=Path)
+    answer.add_argument("--dense-model")
+    answer.add_argument("--device")
+    answer.add_argument("--dense-batch-size", type=int, default=32)
+    answer.add_argument("--max-answer-sentences", type=int, default=1)
+    answer.add_argument("--output", type=Path)
+
+    generation_evaluation = commands.add_parser(
+        "generation-evaluate", help="Evaluate refusals and citation grounding"
+    )
+    generation_evaluation.add_argument("corpus", type=Path)
+    generation_evaluation.add_argument("dataset", type=Path)
+    generation_evaluation.add_argument(
+        "--retriever", choices=("bm25", "dense"), default="bm25"
+    )
+    generation_evaluation.add_argument("--dense-cache", type=Path)
+    generation_evaluation.add_argument("--dense-model")
+    generation_evaluation.add_argument("--device")
+    generation_evaluation.add_argument("--dense-batch-size", type=int, default=32)
+    generation_evaluation.add_argument("--max-answer-sentences", type=int, default=1)
+    generation_evaluation.add_argument("--top-k", type=int, default=5)
+    generation_evaluation.add_argument("--levels", type=_parse_levels, default={"passage"})
+    generation_evaluation.add_argument("--output", type=Path)
+
+    study_guide = commands.add_parser(
+        "study-guide", help="Create an offline page-cited chapter summary and flashcards"
+    )
+    study_guide.add_argument("corpus", type=Path)
+    study_guide.add_argument("--document-id")
+    study_guide.add_argument("--section")
+    study_guide.add_argument("--summary-bullets", type=int, default=5)
+    study_guide.add_argument("--flashcards", type=int, default=5)
+    study_guide.add_argument("--concepts", type=int, default=5)
+    study_guide.add_argument("--formulas", type=int, default=5)
+    study_guide.add_argument("--questions", type=int, default=5)
+    study_guide.add_argument("--output", type=Path)
+
+    study_ui = commands.add_parser(
+        "build-study-ui", help="Build a local offline study UI with page previews"
+    )
+    study_ui.add_argument("corpus", type=Path)
+    study_ui.add_argument("--manifests", nargs="+", type=Path, required=True)
+    study_ui.add_argument("--document-id")
+    study_ui.add_argument("--section")
+    study_ui.add_argument("--summary-bullets", type=int, default=5)
+    study_ui.add_argument("--flashcards", type=int, default=5)
+    study_ui.add_argument("--concepts", type=int, default=5)
+    study_ui.add_argument("--formulas", type=int, default=5)
+    study_ui.add_argument("--questions", type=int, default=5)
+    study_ui.add_argument("--output-dir", type=Path, required=True)
+
+    study_review = commands.add_parser(
+        "build-study-review-pack", help="Build a local human review pack for study materials"
+    )
+    study_review.add_argument("corpus", type=Path)
+    study_review.add_argument("--manifests", nargs="+", type=Path, required=True)
+    study_review.add_argument("--sample-size", type=int, default=30)
+    study_review.add_argument("--summary-bullets", type=int, default=4)
+    study_review.add_argument("--flashcards", type=int, default=4)
+    study_review.add_argument("--concepts", type=int, default=4)
+    study_review.add_argument("--formulas", type=int, default=4)
+    study_review.add_argument("--questions", type=int, default=4)
+    study_review.add_argument("--output-dir", type=Path, required=True)
+
+    offline_course = commands.add_parser(
+        "build-offline-course",
+        help="Turn PDF/PPTX course files into a ready-to-open offline study site",
+    )
+    offline_course.add_argument("documents", nargs="+", type=Path)
+    offline_course.add_argument("--output-dir", type=Path, required=True)
+    offline_course.add_argument("--max-chars", type=int, default=500)
+    offline_course.add_argument("--overlap", type=int, default=1)
+    offline_course.add_argument("--dpi", type=int, default=144)
+    offline_course.add_argument("--pdftoppm", type=Path)
+    offline_course.add_argument("--soffice", type=Path)
+    offline_course.add_argument("--summary-bullets", type=int, default=4)
+    offline_course.add_argument("--flashcards", type=int, default=4)
+    offline_course.add_argument("--concepts", type=int, default=4)
+    offline_course.add_argument("--formulas", type=int, default=4)
+    offline_course.add_argument("--questions", type=int, default=4)
+
     evaluation = commands.add_parser("evaluate", help="Evaluate BM25 on a JSONL QA set")
     evaluation.add_argument("corpus", type=Path)
     evaluation.add_argument("dataset", type=Path)
@@ -261,6 +406,10 @@ def build_parser() -> argparse.ArgumentParser:
     review.add_argument(
         "--manifests", nargs="*", type=Path, default=[], help="Rendered page manifests"
     )
+    review.add_argument("--split", choices=sorted(DATASET_SPLITS))
+    review.add_argument("--reviewer-type", choices=("ai", "human"))
+    review.add_argument("--reset-review-state", action="store_true")
+    review.add_argument("--verified-reviewer-type", choices=("ai", "human"))
 
     mining = commands.add_parser("mine-negatives", help="Mine BM25 hard negatives for training")
     mining.add_argument("corpus", type=Path)
@@ -303,6 +452,11 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Filter valid negatives even when pending or uncertain rows remain",
     )
+    apply_reviews.add_argument(
+        "--pending-as-valid",
+        action="store_true",
+        help="Treat unanswered review rows as valid negatives by explicit reviewer convention",
+    )
 
     train_reranker = commands.add_parser(
         "train-reranker", help="Fine-tune a cross-encoder from reviewed triplets"
@@ -317,6 +471,12 @@ def build_parser() -> argparse.ArgumentParser:
     train_reranker.add_argument("--learning-rate", type=float, default=2e-5)
     train_reranker.add_argument("--seed", type=int, default=42)
     train_reranker.add_argument("--local-files-only", action="store_true")
+    train_reranker.add_argument("--dev-dataset", type=Path)
+    train_reranker.add_argument("--dense-cache", type=Path)
+    train_reranker.add_argument("--candidate-k", type=int, default=20)
+    train_reranker.add_argument("--validation-top-k", type=int, default=5)
+    train_reranker.add_argument("--early-stopping-patience", type=int, default=2)
+    train_reranker.add_argument("--early-stopping-min-delta", type=float, default=0.0)
 
     reranker_evaluation = commands.add_parser(
         "reranker-evaluate", help="Evaluate Dense candidates reordered by a cross-encoder"
@@ -324,7 +484,8 @@ def build_parser() -> argparse.ArgumentParser:
     reranker_evaluation.add_argument("corpus", type=Path)
     reranker_evaluation.add_argument("dataset", type=Path)
     reranker_evaluation.add_argument("--cache", type=Path, required=True)
-    reranker_evaluation.add_argument("--reranker", type=Path, required=True)
+    reranker_evaluation.add_argument("--reranker", required=True)
+    reranker_evaluation.add_argument("--reranker-local-files-only", action="store_true")
     reranker_evaluation.add_argument("--model")
     reranker_evaluation.add_argument("--device")
     reranker_evaluation.add_argument("--batch-size", type=int, default=32)
@@ -338,6 +499,83 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if args.command == "build-offline-course":
+        started_at = perf_counter()
+        unsupported = [
+            str(document)
+            for document in args.documents
+            if document.suffix.casefold() not in {".pdf", ".pptx"}
+        ]
+        if unsupported:
+            raise ValueError(
+                "build-offline-course supports only PDF/PPTX files because page previews "
+                f"are required: {unsupported}"
+            )
+        target = args.output_dir
+        target.mkdir(parents=True, exist_ok=True)
+        rendered_dir = target / "rendered_pages"
+        all_chunks = []
+        rendered_pages = []
+        documents = []
+        seen_document_ids: set[str] = set()
+        for document in args.documents:
+            pages = get_parser(document).parse(document)
+            document_id = pages[0].document_id if pages else None
+            if not document_id:
+                raise ValueError(f"Document contains no pages: {document}")
+            if document_id in seen_document_ids:
+                raise ValueError(f"Duplicate document content: {document}")
+            seen_document_ids.add(document_id)
+            chunks = HierarchicalChunker(args.max_chars, args.overlap).chunk(pages)
+            rendered = render_document(
+                document,
+                rendered_dir,
+                dpi=args.dpi,
+                pdftoppm_executable=args.pdftoppm,
+                soffice_executable=args.soffice,
+                page_metadata={page.page_number: page.metadata for page in pages},
+            )
+            all_chunks.extend(chunks)
+            rendered_pages.extend(rendered)
+            documents.append(
+                {
+                    "source_name": document.name,
+                    "document_id": document_id,
+                    "pages": len(pages),
+                    "chunks": len(chunks),
+                }
+            )
+        corpus = target / "course_chunks.jsonl"
+        manifest = target / "page_manifest.jsonl"
+        write_jsonl((chunk.to_dict() for chunk in all_chunks), corpus)
+        write_page_manifest(rendered_pages, manifest)
+        guides = build_course_study_guides(
+            all_chunks,
+            summary_bullets=args.summary_bullets,
+            flashcard_count=args.flashcards,
+            concept_count=args.concepts,
+            formula_count=args.formulas,
+            question_count=args.questions,
+        )
+        site = build_course_study_ui(guides, rendered_pages, target / "study_ui")
+        _print_json(
+            {
+                "mode": "offline-course",
+                "documents": documents,
+                "sections": len(guides),
+                "summary_bullets": sum(len(guide.summary) for guide in guides),
+                "flashcards": sum(len(guide.flashcards) for guide in guides),
+                "concepts": sum(len(guide.concepts) for guide in guides),
+                "formulas": sum(len(guide.formulas) for guide in guides),
+                "questions": sum(len(guide.questions) for guide in guides),
+                "corpus": str(corpus),
+                "manifest": str(manifest),
+                "site": str(site),
+                "latency_ms": {"end_to_end": round((perf_counter() - started_at) * 1000, 3)},
+            },
+            indent=2,
+        )
+        return 0
     if args.command == "render-pages":
         parsed_pages = get_parser(args.document).parse(args.document)
         rendered_pages = render_document(
@@ -502,6 +740,120 @@ def main(argv: list[str] | None = None) -> int:
             "query_diagnostics": compare_page_retrievers(
                 retrievers, evaluation_examples, args.diagnostic_k
             ),
+        }
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(
+                json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+            report["output"] = str(args.output)
+        _print_json(report, indent=2)
+        return 0
+    if args.command == "type-aware-evaluate":
+        rendered_pages = _load_rendered_pages(args.manifests)
+        visual_embeddings, cached_visual_model = load_page_embedding_cache(
+            rendered_pages, args.visual_cache, args.visual_model
+        )
+        visual_model = args.visual_model or cached_visual_model
+        visual_encoder = SentenceTransformersCLIPEncoder(
+            visual_model, args.device, args.visual_batch_size
+        )
+        clip_page = VisualPageRetriever(rendered_pages, visual_encoder, visual_embeddings)
+
+        corpus_chunks = load_chunks(args.corpus)
+        chunks = [chunk for chunk in corpus_chunks if chunk.level in args.levels]
+        dense_embeddings, dense_metadata = load_chunk_embedding_cache(
+            chunks, args.dense_cache, args.dense_model
+        )
+        dense_model = args.dense_model or dense_metadata["model"]
+        dense_encoder = SentenceTransformersTextEncoder(
+            dense_model,
+            args.device,
+            args.dense_batch_size,
+            dense_metadata["query_prefix"],
+            dense_metadata["document_prefix"],
+        )
+        dense_page = ChunkPageRetriever(
+            DenseRetriever(chunks, dense_encoder, dense_embeddings),
+            rendered_pages,
+            args.candidate_k,
+        )
+        bm25_page = BM25PageRetriever(chunks, rendered_pages, args.candidate_k)
+        dense_clip_rrf = ReciprocalRankFusionRetriever(
+            {"dense": dense_page, "clip": clip_page},
+            {"dense": args.dense_weight, "clip": args.visual_weight},
+            args.rrf_k,
+            args.candidate_k,
+        )
+        retrievers = {
+            "bm25_page": bm25_page,
+            "dense_page": dense_page,
+            "clip_page": clip_page,
+            "dense_clip_rrf": dense_clip_rrf,
+        }
+        routes = {question_type: "dense_page" for question_type in QUESTION_TYPES}
+        routes.update(dict(args.route))
+
+        examples = list(read_jsonl(args.dataset))
+        validation = validate_dataset(
+            examples,
+            require_question_types=True,
+            require_splits=True,
+            require_document_ids=True,
+            require_annotation_statuses=True,
+            chunks=corpus_chunks,
+        )
+        evaluation_examples = (
+            [example for example in examples if example.get("split") == args.split]
+            if args.split
+            else examples
+        )
+        if not evaluation_examples:
+            raise ValueError(f"The dataset has no examples in split {args.split!r}")
+        routed_metrics, route_counts = evaluate_routed_page_retrieval(
+            retrievers, routes, evaluation_examples, args.top_k
+        )
+        diagnostics = compare_page_retrievers(
+            retrievers, evaluation_examples, args.diagnostic_k
+        )
+        for diagnostic in diagnostics:
+            diagnostic["selected_system"] = routes[diagnostic["question_type"]]
+        report = {
+            "experiment": {
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "retriever": "question-type-router",
+                "dense_model": dense_model,
+                "visual_model": visual_model,
+                "top_k": args.top_k,
+                "candidate_k": args.candidate_k,
+                "diagnostic_k": args.diagnostic_k,
+                "rrf_k": args.rrf_k,
+                "dense_clip_weights": {
+                    "dense": args.dense_weight,
+                    "clip": args.visual_weight,
+                },
+                "routes": dict(sorted(routes.items())),
+                "route_counts": route_counts,
+                "levels": sorted(args.levels),
+                "split": args.split or "all",
+                "evaluated_queries": len(evaluation_examples),
+                "corpus": str(args.corpus.resolve()),
+                "manifests": [str(path.resolve()) for path in _expand_paths(args.manifests)],
+                "dense_cache": str(args.dense_cache.resolve()),
+                "visual_cache": str(args.visual_cache.resolve()),
+                "dataset": str(args.dataset.resolve()),
+            },
+            "dataset": validation.to_dict(),
+            "metrics": {
+                **{
+                    name: evaluate_page_retrieval(
+                        retriever, evaluation_examples, args.top_k
+                    ).to_dict()
+                    for name, retriever in retrievers.items()
+                },
+                "routed": routed_metrics.to_dict(),
+            },
+            "query_diagnostics": diagnostics,
         }
         if args.output:
             args.output.parent.mkdir(parents=True, exist_ok=True)
@@ -733,7 +1085,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "apply-negative-reviews":
         reviewed_rows = list(read_jsonl(args.reviews))
         triplets, summary = apply_negative_reviews(
-            reviewed_rows, require_complete=not args.allow_incomplete
+            reviewed_rows,
+            require_complete=not args.allow_incomplete,
+            pending_as_valid=args.pending_as_valid,
         )
         write_jsonl(triplets, args.output)
         summary["output"] = str(args.output)
@@ -743,6 +1097,36 @@ def main(argv: list[str] | None = None) -> int:
         chunks = load_chunks(args.corpus)
         triplets = list(read_jsonl(args.triplets))
         pairs, data_summary = build_reranker_pairs(triplets, chunks)
+        if bool(args.dev_dataset) != bool(args.dense_cache):
+            raise ValueError("--dev-dataset and --dense-cache must be provided together")
+        validation_groups = None
+        if args.dev_dataset:
+            passage_chunks = [chunk for chunk in chunks if chunk.level == "passage"]
+            embeddings, cache_metadata = load_chunk_embedding_cache(
+                passage_chunks, args.dense_cache
+            )
+            encoder = SentenceTransformersTextEncoder(
+                cache_metadata["model"],
+                args.device,
+                32,
+                cache_metadata["query_prefix"],
+                cache_metadata["document_prefix"],
+            )
+            dense = DenseRetriever(passage_chunks, encoder, embeddings)
+            dev_examples = [
+                row for row in read_jsonl(args.dev_dataset) if row.get("split") == "dev"
+            ]
+            validate_dataset(
+                dev_examples,
+                require_question_types=True,
+                require_splits=True,
+                require_document_ids=True,
+                require_annotation_statuses=True,
+                chunks=chunks,
+            )
+            validation_groups = build_reranker_validation_groups(
+                dev_examples, dense, candidate_k=args.candidate_k
+            )
         training_summary = train_cross_encoder(
             pairs,
             args.output_dir,
@@ -753,6 +1137,10 @@ def main(argv: list[str] | None = None) -> int:
             learning_rate=args.learning_rate,
             seed=args.seed,
             local_files_only=args.local_files_only,
+            validation_groups=validation_groups,
+            validation_top_k=args.validation_top_k,
+            early_stopping_patience=args.early_stopping_patience,
+            early_stopping_min_delta=args.early_stopping_min_delta,
         )
         _print_json({"data": data_summary, "training": training_summary}, indent=2)
         return 0
@@ -769,9 +1157,12 @@ def main(argv: list[str] | None = None) -> int:
             cache_metadata["document_prefix"],
         )
         dense = DenseRetriever(chunks, encoder, embeddings)
-        retriever = RerankedRetriever(
-            dense, CrossEncoderReranker(args.reranker, args.device), args.candidate_k
+        reranker = CrossEncoderReranker(
+            args.reranker,
+            args.device,
+            local_files_only=args.reranker_local_files_only,
         )
+        retriever = RerankedRetriever(dense, reranker, args.candidate_k)
         examples = list(read_jsonl(args.dataset))
         validation = validate_dataset(
             examples,
@@ -789,7 +1180,11 @@ def main(argv: list[str] | None = None) -> int:
                 "generated_at": datetime.now(timezone.utc).isoformat(),
                 "retriever": "dense-cross-encoder",
                 "dense_model": model_name,
-                "reranker": str(args.reranker.resolve()),
+                "reranker": (
+                    str(Path(args.reranker).resolve())
+                    if Path(args.reranker).exists()
+                    else args.reranker
+                ),
                 "top_k": args.top_k,
                 "candidate_k": args.candidate_k,
                 "levels": sorted(args.levels),
@@ -842,9 +1237,28 @@ def main(argv: list[str] | None = None) -> int:
             require_annotation_statuses=True,
             chunks=review_chunks,
         )
+        if args.split:
+            review_examples = [
+                example for example in review_examples if example.get("split") == args.split
+            ]
+        if args.reviewer_type:
+            review_examples = [
+                example
+                for example in review_examples
+                if example.get("reviewer_type") == args.reviewer_type
+            ]
+        if not review_examples:
+            raise ValueError("No review examples match the requested filters")
         rendered_pages = _load_rendered_pages(args.manifests)
         _print_json(
-            build_review_pack(review_examples, review_chunks, args.output, rendered_pages),
+            build_review_pack(
+                review_examples,
+                review_chunks,
+                args.output,
+                rendered_pages,
+                reset_review_state=args.reset_review_state,
+                verified_reviewer_type=args.verified_reviewer_type,
+            ),
             indent=2,
         )
         return 0
@@ -893,12 +1307,174 @@ def main(argv: list[str] | None = None) -> int:
             indent=2,
         )
         return 0
+    if args.command == "study-guide":
+        started_at = perf_counter()
+        guide = build_chapter_study_guide(
+            load_chunks(args.corpus),
+            document_id=args.document_id,
+            section=args.section,
+            summary_bullets=args.summary_bullets,
+            flashcard_count=args.flashcards,
+            concept_count=args.concepts,
+            formula_count=args.formulas,
+            question_count=args.questions,
+        )
+        report = {
+            **guide.to_dict(),
+            "mode": "offline-extractive",
+            "latency_ms": {"end_to_end": round((perf_counter() - started_at) * 1000, 3)},
+        }
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(
+                json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+            report["output"] = str(args.output)
+        _print_json(report, indent=2)
+        return 0
+    if args.command == "build-study-ui":
+        started_at = perf_counter()
+        guides = build_course_study_guides(
+            load_chunks(args.corpus),
+            document_id=args.document_id,
+            section=args.section,
+            summary_bullets=args.summary_bullets,
+            flashcard_count=args.flashcards,
+            concept_count=args.concepts,
+            formula_count=args.formulas,
+            question_count=args.questions,
+        )
+        rendered_pages = [
+            page
+            for manifest in _expand_paths(args.manifests)
+            for page in load_page_manifest(manifest)
+        ]
+        output = build_course_study_ui(guides, rendered_pages, args.output_dir)
+        _print_json(
+            {
+                "mode": "offline-local-ui",
+                "documents": len({guide.document_id for guide in guides}),
+                "sections": len(guides),
+                "summary_bullets": sum(len(guide.summary) for guide in guides),
+                "concepts": sum(len(guide.concepts) for guide in guides),
+                "formulas": sum(len(guide.formulas) for guide in guides),
+                "flashcards": sum(len(guide.flashcards) for guide in guides),
+                "questions": sum(len(guide.questions) for guide in guides),
+                "cited_pages": len(
+                    {
+                        (guide.document_id, page)
+                        for guide in guides
+                        for page in guide.to_dict()["cited_pages"]
+                    }
+                ),
+                "latency_ms": {"end_to_end": round((perf_counter() - started_at) * 1000, 3)},
+                "output": str(output),
+            },
+            indent=2,
+        )
+        return 0
+    if args.command == "build-study-review-pack":
+        started_at = perf_counter()
+        all_guides = build_course_study_guides(
+            load_chunks(args.corpus),
+            summary_bullets=args.summary_bullets,
+            flashcard_count=args.flashcards,
+            concept_count=args.concepts,
+            formula_count=args.formulas,
+            question_count=args.questions,
+        )
+        guides = stratified_section_sample(all_guides, args.sample_size)
+        rendered_pages = [
+            page
+            for manifest in _expand_paths(args.manifests)
+            for page in load_page_manifest(manifest)
+        ]
+        output = build_study_review_pack(guides, rendered_pages, args.output_dir)
+        _print_json(
+            {
+                "mode": "offline-study-material-review",
+                "available_sections": len(all_guides),
+                "sampled_sections": len(guides),
+                "sampled_documents": len({guide.document_id for guide in guides}),
+                "latency_ms": {"end_to_end": round((perf_counter() - started_at) * 1000, 3)},
+                "output": str(output),
+            },
+            indent=2,
+        )
+        return 0
     corpus_chunks = load_chunks(args.corpus)
     chunks = [chunk for chunk in corpus_chunks if chunk.level in args.levels]
-    retriever = BM25Retriever(chunks)
+    retriever_name = "bm25"
+    retriever_model = None
+    if args.command in {"answer", "generation-evaluate"} and args.retriever == "dense":
+        if not args.dense_cache:
+            raise ValueError("--dense-cache is required when --retriever dense")
+        embeddings, cache_metadata = load_chunk_embedding_cache(
+            chunks, args.dense_cache, args.dense_model
+        )
+        retriever_model = args.dense_model or cache_metadata["model"]
+        encoder = SentenceTransformersTextEncoder(
+            retriever_model,
+            args.device,
+            args.dense_batch_size,
+            cache_metadata["query_prefix"],
+            cache_metadata["document_prefix"],
+        )
+        retriever = DenseRetriever(chunks, encoder, embeddings)
+        retriever_name = "dense"
+    else:
+        retriever = BM25Retriever(chunks)
     if args.command == "search":
         results = retriever.search(args.query, args.top_k)
         _print_json([result.to_dict() for result in results], indent=2)
+        return 0
+    if args.command == "answer":
+        evidence = retriever.search(args.query, args.top_k)
+        generator = GroundedAnswerGenerator(ExtractiveAnswerBackend(args.max_answer_sentences))
+        material = generator.generate(args.query, evidence)
+        report = {
+            **material.to_dict(),
+            "query": args.query,
+            "retriever": retriever_name,
+            "retriever_model": retriever_model,
+            "max_answer_sentences": args.max_answer_sentences,
+            "retrieved_chunk_ids": [result.chunk.chunk_id for result in evidence],
+        }
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(
+                json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+            report["output"] = str(args.output)
+        _print_json(report, indent=2)
+        return 0
+    if args.command == "generation-evaluate":
+        generator = GroundedAnswerGenerator(ExtractiveAnswerBackend(args.max_answer_sentences))
+        metrics, diagnostics = evaluate_generation(
+            generator,
+            retriever,
+            list(read_jsonl(args.dataset)),
+            args.top_k,
+        )
+        report = {
+            "experiment": {
+                "generated_at": datetime.now(timezone.utc).isoformat(),
+                "retriever": retriever_name,
+                "retriever_model": retriever_model,
+                "top_k": args.top_k,
+                "max_answer_sentences": args.max_answer_sentences,
+                "dataset": str(args.dataset.resolve()),
+            },
+            "metrics": metrics.to_dict(),
+            "diagnostics": diagnostics,
+        }
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(
+                json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+            report["output"] = str(args.output)
+        _print_json(report, indent=2)
         return 0
     examples = list(read_jsonl(args.dataset))
     if args.command == "mine-negatives":

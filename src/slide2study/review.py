@@ -15,6 +15,9 @@ def build_review_pack(
     chunks: Sequence[Chunk],
     output: str | Path,
     rendered_pages: Sequence[RenderedPage] = (),
+    *,
+    reset_review_state: bool = False,
+    verified_reviewer_type: str | None = None,
 ) -> dict[str, Any]:
     """Create a private, self-contained HTML workflow for reviewing candidate QA."""
     target = Path(output).resolve()
@@ -32,7 +35,15 @@ def build_review_pack(
     missing_images: set[tuple[str, int]] = set()
     review_examples = []
 
+    prepared_examples = []
     for example in examples:
+        prepared = dict(example)
+        if reset_review_state:
+            prepared.pop("review_decision", None)
+            prepared.pop("review_notes", None)
+            prepared["annotation_status"] = "candidate"
+        prepared_examples.append(prepared)
+        example = prepared
         document_id = str(example["document_id"])
         evidence_pages = []
         for page_number in example.get("relevant_pages", []):
@@ -65,10 +76,11 @@ def build_review_pack(
             )
         review_examples.append({"record": example, "evidence_pages": evidence_pages})
 
-    serialized = json.dumps(examples, ensure_ascii=False, sort_keys=True).encode("utf-8")
+    serialized = json.dumps(prepared_examples, ensure_ascii=False, sort_keys=True).encode("utf-8")
     payload = {
         "fingerprint": hashlib.sha256(serialized).hexdigest()[:16],
         "examples": review_examples,
+        "verified_reviewer_type": verified_reviewer_type,
     }
     target.write_text(_render_html(payload), encoding="utf-8")
     return {
@@ -77,6 +89,8 @@ def build_review_pack(
         "evidence_pages": sum(len(item["evidence_pages"]) for item in review_examples),
         "copied_images": len(copied_images),
         "missing_images": len(missing_images),
+        "reset_review_state": reset_review_state,
+        "verified_reviewer_type": verified_reviewer_type,
     }
 
 
@@ -228,6 +242,8 @@ document.getElementById("exportButton").onclick = () => {{
     record.review_decision = review.decision || "unreviewed";
     if (review.notes) record.review_notes = review.notes;
     if (review.decision === "verified") record.annotation_status = "verified";
+    if (review.decision === "verified" && payload.verified_reviewer_type)
+      record.reviewer_type = payload.verified_reviewer_type;
     return JSON.stringify(record);
   }});
   const blob = new Blob([rows.join("\\n") + "\\n"], {{type: "application/x-ndjson"}});

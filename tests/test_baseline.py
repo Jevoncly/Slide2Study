@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from slide2study.chunking import HierarchicalChunker, validate_chunk_hierarchy
+from slide2study.cli import build_parser
 from slide2study.cli import main as cli_main
 from slide2study.dense import load_chunk_embedding_cache, write_chunk_embedding_cache
 from slide2study.evaluation import (
@@ -15,10 +16,12 @@ from slide2study.evaluation import (
     compare_retrievers,
     evaluate,
     evaluate_page_retrieval,
+    evaluate_routed_page_retrieval,
     validate_dataset,
 )
 from slide2study.fusion import (
     BM25PageRetriever,
+    ChunkPageRetriever,
     ReciprocalRankFusionChunkRetriever,
     ReciprocalRankFusionRetriever,
 )
@@ -34,7 +37,12 @@ from slide2study.parsing import (
     build_parse_report,
     prepare_pages_for_retrieval,
 )
-from slide2study.reranking import RerankedRetriever, build_reranker_pairs
+from slide2study.reranking import (
+    RerankedRetriever,
+    RerankerValidationEvaluator,
+    build_reranker_pairs,
+    build_reranker_validation_groups,
+)
 from slide2study.retrieval import BM25Retriever, DenseRetriever, mixed_tokenize
 from slide2study.review import build_review_pack
 from slide2study.training import mine_hard_negatives
@@ -428,6 +436,22 @@ class BaselineTests(unittest.TestCase):
                 [{"review_id": "negative-0001", "review_decision": "uncertain"}]
             )
 
+    def test_apply_negative_reviews_can_treat_pending_as_valid_explicitly(self):
+        row = {
+            "review_id": "negative-0001",
+            "review_decision": "pending",
+            "query": "question",
+            "positive_chunk_id": "positive",
+            "negative_chunk_id": "negative",
+            "negative_rank": 2,
+            "miner": "dense:test",
+            "difficulty": "hard",
+        }
+        triplets, summary = apply_negative_reviews([row], pending_as_valid=True)
+        self.assertEqual(len(triplets), 1)
+        self.assertEqual(summary["retained_triplets"], 1)
+        self.assertTrue(summary["pending_as_valid"])
+
     def test_reranker_pairs_deduplicate_positive_examples(self):
         chunks = [
             Chunk("positive", "deck", 1, 1, "correct evidence"),
@@ -469,6 +493,60 @@ class BaselineTests(unittest.TestCase):
         results = RerankedRetriever(base, ReverseReranker(), candidate_k=4).search("q", top_k=2)
         self.assertEqual(base.requested, 4)
         self.assertEqual([item.chunk.chunk_id for item in results], ["chunk-3", "chunk-2"])
+
+    def test_reranker_validation_uses_page_labels_and_reports_ranking_metrics(self):
+        chunks = [
+            Chunk("wrong", "deck", 1, 1, "distractor"),
+            Chunk("right", "deck", 2, 2, "answer"),
+        ]
+
+        class CandidateRetriever:
+            def search(self, _query, top_k=5):
+                return [
+                    SearchResult(chunk, 1.0 / rank, rank)
+                    for rank, chunk in enumerate(chunks[:top_k], 1)
+                ]
+
+        groups = build_reranker_validation_groups(
+            [
+                {
+                    "query": "question",
+                    "document_id": "deck",
+                    "relevant_pages": [2],
+                }
+            ],
+            CandidateRetriever(),
+            candidate_k=2,
+        )
+        self.assertEqual(groups[0].relevance, [0, 1])
+
+        class FakeModel:
+            def predict(self, pairs, show_progress_bar=False):
+                self.show_progress_bar = show_progress_bar
+                return [0.1 if text == "distractor" else 0.9 for _query, text in pairs]
+
+        evaluator = RerankerValidationEvaluator(groups, top_k=2, patience=2)
+        metrics = evaluator(FakeModel(), epoch=1, steps=3)
+        self.assertEqual(metrics["recall_at_k"], 1.0)
+        self.assertEqual(metrics["mrr"], 1.0)
+        self.assertEqual(metrics["ndcg_at_k"], 1.0)
+        self.assertTrue(evaluator.history[0]["improved"])
+
+    def test_reranker_cli_preserves_hugging_face_model_identifier(self):
+        args = build_parser().parse_args(
+            [
+                "reranker-evaluate",
+                "corpus.jsonl",
+                "eval.jsonl",
+                "--cache",
+                "dense.json",
+                "--reranker",
+                "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1",
+            ]
+        )
+        self.assertEqual(
+            args.reranker, "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
+        )
 
     def test_parse_report_flags_pages_that_need_vision(self):
         pages = [
@@ -608,6 +686,50 @@ class BaselineTests(unittest.TestCase):
         )
         self.assertEqual(diagnostics[0]["systems"]["bm25"]["first_relevant_rank"], 1)
         self.assertEqual(diagnostics[0]["systems"]["hybrid"]["first_relevant_rank"], 2)
+
+    def test_question_type_router_selects_page_retrievers(self):
+        pages = [
+            RenderedPage("deck", 1, "page-1.png", "deck.pdf", 100, 80, "a"),
+            RenderedPage("deck", 2, "page-2.png", "deck.pdf", 100, 80, "b"),
+        ]
+        chunks = [
+            Chunk("chunk-1", "deck", 1, 1, "alpha", level="passage"),
+            Chunk("chunk-2", "deck", 2, 2, "beta", level="passage"),
+        ]
+        retrievers = {
+            "text": ChunkPageRetriever(StaticRetriever(chunks), pages),
+            "visual": VisualPageRetriever(pages, FakeMultimodalEncoder()),
+        }
+        summary, route_counts = evaluate_routed_page_retrieval(
+            retrievers,
+            {"text": "text", "visual_only": "visual"},
+            [
+                {
+                    "query": "alpha",
+                    "document_id": "deck",
+                    "relevant_pages": [1],
+                    "question_type": "text",
+                },
+                {
+                    "query": "diagram",
+                    "document_id": "deck",
+                    "relevant_pages": [2],
+                    "question_type": "visual_only",
+                },
+            ],
+            top_k=1,
+        )
+        self.assertEqual(summary.recall_at_k, 1.0)
+        self.assertEqual(route_counts, {"text": 1, "visual": 1})
+        with self.assertRaisesRegex(ValueError, "No route configured"):
+            evaluate_routed_page_retrieval(retrievers, {"text": "text"}, [
+                {
+                    "query": "diagram",
+                    "document_id": "deck",
+                    "relevant_pages": [2],
+                    "question_type": "visual_only",
+                }
+            ])
 
     def test_dense_retrieval_and_cache_validate_chunk_text(self):
         chunks = [
@@ -907,6 +1029,84 @@ class BaselineTests(unittest.TestCase):
             loaded = load_page_manifest(manifest)
         self.assertEqual(loaded, [page])
 
+    def test_type_aware_evaluate_cli_routes_visual_questions(self):
+        chunks = [
+            Chunk("chunk-1", "deck", 1, 1, "alpha", level="passage"),
+            Chunk("chunk-2", "deck", 2, 2, "beta", level="passage"),
+        ]
+        pages = [
+            RenderedPage("deck", 1, "page-1.png", "deck.pdf", 100, 80, "a"),
+            RenderedPage("deck", 2, "page-2.png", "deck.pdf", 100, 80, "b"),
+        ]
+        example = {
+            "id": "routed-q1",
+            "query": "diagram",
+            "document_id": "deck",
+            "relevant_pages": [2],
+            "relevant_chunk_ids": ["chunk-2"],
+            "question_type": "visual_only",
+            "split": "dev",
+            "annotation_status": "verified",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            corpus = root / "corpus.jsonl"
+            dataset = root / "dataset.jsonl"
+            manifest = root / "pages.jsonl"
+            dense_cache = root / "dense.json"
+            visual_cache = root / "visual.json"
+            report_path = root / "report.json"
+            write_jsonl((chunk.to_dict() for chunk in chunks), corpus)
+            write_jsonl([example], dataset)
+            write_page_manifest(pages, manifest)
+            write_chunk_embedding_cache(
+                chunks,
+                [[1.0, 0.0], [0.0, 1.0]],
+                dense_cache,
+                "fake-dense",
+                "query: ",
+                "passage: ",
+            )
+            write_page_embedding_cache(
+                pages, [[1.0, 0.0], [0.0, 1.0]], visual_cache, "fake-clip"
+            )
+            with (
+                patch("slide2study.cli.SentenceTransformersTextEncoder", FakeTextEncoder),
+                patch(
+                    "slide2study.cli.SentenceTransformersCLIPEncoder",
+                    FakeMultimodalEncoder,
+                ),
+                redirect_stdout(io.StringIO()),
+            ):
+                result = cli_main(
+                    [
+                        "type-aware-evaluate",
+                        str(corpus),
+                        str(dataset),
+                        "--manifests",
+                        str(manifest),
+                        "--dense-cache",
+                        str(dense_cache),
+                        "--visual-cache",
+                        str(visual_cache),
+                        "--route",
+                        "visual_only=clip_page",
+                        "--split",
+                        "dev",
+                        "--top-k",
+                        "1",
+                        "--diagnostic-k",
+                        "1",
+                        "--output",
+                        str(report_path),
+                    ]
+                )
+            report = json.loads(report_path.read_text(encoding="utf-8"))
+        self.assertEqual(result, 0)
+        self.assertEqual(report["experiment"]["route_counts"], {"clip_page": 1})
+        self.assertEqual(report["metrics"]["routed"]["recall_at_k"], 1.0)
+        self.assertEqual(report["query_diagnostics"][0]["selected_system"], "clip_page")
+
     def test_review_pack_copies_evidence_and_builds_export_ui(self):
         page_chunk = next(chunk for chunk in self.chunks if chunk.level == "page")
         example = {
@@ -944,6 +1144,35 @@ class BaselineTests(unittest.TestCase):
         self.assertIn("导出复核 JSONL", html)
         self.assertIn("function currentReview(record)", html)
         self.assertIn("record.review_notes", html)
+
+    def test_review_pack_can_reset_ai_review_for_independent_human_check(self):
+        page_chunk = next(chunk for chunk in self.chunks if chunk.level == "page")
+        example = {
+            "id": "ai-dev-q1",
+            "query": "Question",
+            "document_id": page_chunk.document_id,
+            "relevant_pages": [page_chunk.page_start],
+            "relevant_chunk_ids": [page_chunk.chunk_id],
+            "question_type": "text",
+            "split": "dev",
+            "annotation_status": "verified",
+            "reviewer_type": "ai",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "index.html"
+            summary = build_review_pack(
+                [example],
+                self.chunks,
+                output,
+                reset_review_state=True,
+                verified_reviewer_type="human",
+            )
+            html = output.read_text(encoding="utf-8")
+        self.assertTrue(summary["reset_review_state"])
+        self.assertEqual(summary["verified_reviewer_type"], "human")
+        self.assertIn('"annotation_status": "candidate"', html)
+        self.assertIn('"verified_reviewer_type": "human"', html)
+        self.assertIn("record.reviewer_type = payload.verified_reviewer_type", html)
 
     @unittest.skipUnless(importlib.util.find_spec("PIL"), "Pillow is not installed")
     def test_pdf_renderer_writes_stable_page_mapping(self):
