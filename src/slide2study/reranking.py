@@ -273,14 +273,24 @@ def train_cross_encoder(
 class CrossEncoderReranker(Reranker):
     """SentenceTransformers cross-encoder adapter for ranked chunk candidates."""
 
-    def __init__(self, model_name_or_path: str | Path, device: str | None = None):
+    def __init__(
+        self,
+        model_name_or_path: str | Path,
+        device: str | None = None,
+        *,
+        local_files_only: bool = False,
+    ):
         try:
             from sentence_transformers import CrossEncoder
         except ImportError as exc:
             raise RuntimeError(
                 'Cross-encoder inference requires: pip install -e ".[vision]"'
             ) from exc
-        self.model = CrossEncoder(str(model_name_or_path), device=device)
+        self.model = CrossEncoder(
+            str(model_name_or_path),
+            device=device,
+            local_files_only=local_files_only,
+        )
 
     def rerank(self, query: str, candidates: list[SearchResult]) -> list[SearchResult]:
         if not candidates:

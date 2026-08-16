@@ -385,7 +385,8 @@ def build_parser() -> argparse.ArgumentParser:
     reranker_evaluation.add_argument("corpus", type=Path)
     reranker_evaluation.add_argument("dataset", type=Path)
     reranker_evaluation.add_argument("--cache", type=Path, required=True)
-    reranker_evaluation.add_argument("--reranker", type=Path, required=True)
+    reranker_evaluation.add_argument("--reranker", required=True)
+    reranker_evaluation.add_argument("--reranker-local-files-only", action="store_true")
     reranker_evaluation.add_argument("--model")
     reranker_evaluation.add_argument("--device")
     reranker_evaluation.add_argument("--batch-size", type=int, default=32)
@@ -980,9 +981,12 @@ def main(argv: list[str] | None = None) -> int:
             cache_metadata["document_prefix"],
         )
         dense = DenseRetriever(chunks, encoder, embeddings)
-        retriever = RerankedRetriever(
-            dense, CrossEncoderReranker(args.reranker, args.device), args.candidate_k
+        reranker = CrossEncoderReranker(
+            args.reranker,
+            args.device,
+            local_files_only=args.reranker_local_files_only,
         )
+        retriever = RerankedRetriever(dense, reranker, args.candidate_k)
         examples = list(read_jsonl(args.dataset))
         validation = validate_dataset(
             examples,
@@ -1000,7 +1004,11 @@ def main(argv: list[str] | None = None) -> int:
                 "generated_at": datetime.now(timezone.utc).isoformat(),
                 "retriever": "dense-cross-encoder",
                 "dense_model": model_name,
-                "reranker": str(args.reranker.resolve()),
+                "reranker": (
+                    str(Path(args.reranker).resolve())
+                    if Path(args.reranker).exists()
+                    else args.reranker
+                ),
                 "top_k": args.top_k,
                 "candidate_k": args.candidate_k,
                 "levels": sorted(args.levels),

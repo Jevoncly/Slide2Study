@@ -96,7 +96,7 @@ Slide2Study 是一个面向算法工程师求职展示的多模态、结构感�
 - [ ] 无 overlap vs 有 overlap
 - [x] BM25 vs Dense
 - [x] Dense vs Hybrid
-- [ ] 有无 Reranker
+- [x] 有无 Reranker
 - [x] 纯文本 vs 页面视觉检索
 
 ## P2：Dense Retrieval 与 Reranker

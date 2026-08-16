@@ -262,11 +262,24 @@ multimodal page retriever。
   81.2 ms；当前 Reranker 大幅退化且约慢 10.6 倍，因此不得设为默认或运行 test。最佳 checkpoint 与报告仅保存在
   `artifacts/public_courseware_reranker_e5` 和对应本地报告中。
 
+### 3.18 检索预训练 Reranker 基线
+
+- `reranker-evaluate --reranker` 现在同时接受本地 checkpoint 和 Hugging Face 模型标识，并
+  支持 `--reranker-local-files-only` 离线复现缓存模型。
+- 使用多语言检索预训练的 `cross-encoder/mmarco-mMiniLMv2-L12-H384-v1`，避免从 E5 随机
+  分类头开始；模型约 1 亿参数，首次下载后可完全离线运行。
+- 仅在 dev 比较 candidate-k 20、10、5；k=5 最优：Recall@5 0.967、MRR 0.908、nDCG@5
+  0.893、平均延迟 189.5 ms。k=20 为 0.967/0.892/0.885、775.0 ms，k=10 为
+  0.967/0.892/0.889、344.4 ms。
+- 同口径 Dense 为 Recall@5 0.967、MRR 0.806、nDCG@5 0.836、81.2 ms；Reranker 保持召回，
+  MRR 提高 0.103、nDCG@5 提高 0.057，代价是约 2.3 倍延迟。当前 dev 配置固定为 k=5。
+- 仍未运行 test；必须先完成新增 AI-dev 的独立人工抽查，再对冻结配置做一次测试集评估。
+
 ## 4. 验证证据
 
 ### 4.1 自动化测试
 
-- 当前测试：46/46 通过；Ruff 检查通过。
+- 当前测试：47/47 通过；Ruff 检查通过。
 - 测试覆盖：解析、质量诊断、三层 chunk、层级校验、BM25、评测指标、hard negatives、
   页面清单、PDF/PPTX 渲染流程、向量缓存及哈希校验、视觉页面排序、页面级评测、
   通用 chunk→page 映射、页面/chunk 加权 RRF、题型路由、逐题诊断、Dense 排序、chunk 缓存
@@ -313,7 +326,8 @@ python -m unittest discover -s tests -v
 - 已有四门课 28 条机器辅助候选 QA，但尚未人工复核，不能作为正式测试集或可靠消融结论。
 - BM25 + CLIP、BM25 + Dense RRF 和 dev 校准的题型门控均已实现；全局固定权重 RRF 未超过
   Dense，题型门控在扩充 dev 上超过 Dense。新增 24 条 dev 为 AI 复核，正式对外结论前仍应
-  做独立人工抽查；人工 test 仍只有 6 条。尚未实现有效的 Reranker 提升和多模态对比学习。
+  做独立人工抽查；人工 test 仍只有 6 条。检索预训练 Reranker 已在 dev 显著提升排序质量，
+  但尚未经过冻结 test 验证；多模态对比学习仍未实现。
 - 尚未实现带引用答案、笔记、闪卡、题库和 UI。
 - 视觉页数量较多；后续需要通过标注集校准视觉风险阈值，而不是只依赖启发式规则。
 
@@ -358,8 +372,8 @@ slide2study build-negative-review-pack artifacts\course_chunks.jsonl artifacts\b
 ## 7. 推荐的下一阶段
 
 1. 对新增 24 条 AI 复核 dev 做独立人工抽查，再冻结题型门控配置。
-2. 为公开课件 train 挖掘并复核困难负例，再用已具备 dev-MRR 早停和最佳 checkpoint 保存的
-   链路微调 Reranker，比较能否在不损害 Dense 首位命中的前提下改善困难查询。
+2. 对冻结的预训练 Reranker（candidate-k=5）在人工抽查后的 dev 重新确认；若结论不变，再
+   对人工 test 运行一次，不根据 test 调整模型或候选深度。
 3. 扩充并冻结人工 test 后完成消融，再接带引用生成。
 
 短期最重要的不是继续堆功能，而是先获得可信的评测集和 baseline 数字。

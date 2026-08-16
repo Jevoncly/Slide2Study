@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from slide2study.chunking import HierarchicalChunker, validate_chunk_hierarchy
+from slide2study.cli import build_parser
 from slide2study.cli import main as cli_main
 from slide2study.dense import load_chunk_embedding_cache, write_chunk_embedding_cache
 from slide2study.evaluation import (
@@ -530,6 +531,22 @@ class BaselineTests(unittest.TestCase):
         self.assertEqual(metrics["mrr"], 1.0)
         self.assertEqual(metrics["ndcg_at_k"], 1.0)
         self.assertTrue(evaluator.history[0]["improved"])
+
+    def test_reranker_cli_preserves_hugging_face_model_identifier(self):
+        args = build_parser().parse_args(
+            [
+                "reranker-evaluate",
+                "corpus.jsonl",
+                "eval.jsonl",
+                "--cache",
+                "dense.json",
+                "--reranker",
+                "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1",
+            ]
+        )
+        self.assertEqual(
+            args.reranker, "cross-encoder/mmarco-mMiniLMv2-L12-H384-v1"
+        )
 
     def test_parse_report_flags_pages_that_need_vision(self):
         pages = [

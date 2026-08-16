@@ -60,6 +60,7 @@ slide2study build-negative-review-pack artifacts/course_chunks.jsonl artifacts/b
 slide2study apply-negative-reviews artifacts/negative_review/reviewed-negative-triplets.jsonl --output artifacts/reviewed_train_triplets.jsonl
 slide2study train-reranker artifacts/course_chunks.jsonl artifacts/reviewed_train_triplets.jsonl --output-dir artifacts/reranker --epochs 10 --dev-dataset data/private/eval.jsonl --dense-cache artifacts/dense_embeddings.json --early-stopping-patience 2
 slide2study reranker-evaluate artifacts/course_chunks.jsonl data/private/eval.jsonl --cache artifacts/dense_embeddings.json --reranker artifacts/reranker --split dev --output artifacts/reranker_dev_report.json
+slide2study reranker-evaluate artifacts/course_chunks.jsonl data/private/eval.jsonl --cache artifacts/dense_embeddings.json --reranker cross-encoder/mmarco-mMiniLMv2-L12-H384-v1 --candidate-k 5 --split dev --output artifacts/mmarco_reranker_dev.json
 ```
 
 `render-pages` 为每页生成稳定的 PNG、尺寸、原始文档路径、页码、SHA-256、页面角色和
@@ -101,7 +102,8 @@ Dense Top-N 候选，每个 epoch 按 dev MRR、Recall@K 和 nDCG@K 评估，保
 并按 patience 早停。最佳 epoch 与逐 epoch 曲线写入 `slide2study_training.json`；不得把 test
 传给训练命令。
 `reranker-evaluate` 从缓存 Dense 检索获取较宽的候选集，再用 cross-encoder 重排，并使用同一
-套 Recall、MRR、nDCG 和延迟指标评估；模型选择只应使用 dev split。
+套 Recall、MRR、nDCG 和延迟指标评估；`--reranker` 可接受本地 checkpoint 或 Hugging Face
+模型名，缓存模型可配合 `--reranker-local-files-only` 离线复现。模型选择只应使用 dev split。
 
 每条检索结果都包含基于文件内容 SHA-256 生成的稳定 `document_id`、`page_start`、
 `page_end`、`section` 和稳定的 `chunk_id`，可直接作为引用生成的 evidence。原始文件名保存在
