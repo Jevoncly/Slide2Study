@@ -93,6 +93,28 @@ class OfflineStudyGuideTests(unittest.TestCase):
 
         self.assertEqual([item.text for item in guide.summary], [chunks[0].text])
 
+    def test_summary_preserves_periods_and_rejects_dangling_sentences(self):
+        chunks = [
+            passage("c1", 3, "A complete sentence already has a period."),
+            passage("c2", 4, "A complete slide bullet without punctuation"),
+            passage("c3", 5, "The missing continuation is"),
+            passage("c4", 6, "The number of answers we're trying"),
+            passage("c5", 7, "When will this method converge"),
+            passage("c6", 8, "S a b d p a c e p h f r q"),
+            passage("c7", 9, "Gdb pq ceh a frfde r"),
+        ]
+
+        guide = build_chapter_study_guide(chunks, summary_bullets=4, flashcard_count=1)
+
+        self.assertEqual(
+            [item.text for item in guide.summary],
+            [
+                "A complete sentence already has a period.",
+                "A complete slide bullet without punctuation.",
+                "When will this method converge?",
+            ],
+        )
+
     def test_extracts_concepts_and_formula_evidence(self):
         chunks = [
             passage(

@@ -172,7 +172,7 @@ def build_chapter_study_guide(
     )
     summary = tuple(
         SummaryBullet(
-            text=item.text,
+            text=_summary_text(item.text),
             citation=_citation(item.chunk, f"S{index}"),
         )
         for index, item in enumerate(summary_candidates, 1)
@@ -304,6 +304,7 @@ def _build_candidates(chunks: list[Chunk]) -> list[_Candidate]:
         if chunk.metadata.get("requires_vision") and len(chunk.text.strip()) < 120:
             continue
         for text in _study_units(chunk.text):
+            text = _clean_candidate_text(text)
             text = re.sub(r"\s+[A-Z][A-Za-z-]{1,20}\?$", "", text).strip()
             terms = frozenset(meaningful_tokens(text))
             key = text.casefold()
@@ -317,6 +318,7 @@ def _build_candidates(chunks: list[Chunk]) -> list[_Candidate]:
                 or re.match(r"^(?:only if|\[?demo\b)", key)
                 or text.endswith(":")
                 or re.search(r"\.{2,}|[‥…⋯]", text)
+                or _looks_incomplete(text)
                 or re.search(r"[a-z][A-Z]", text)
                 or re.search(r"\s[A-Z]$", text)
                 or re.search(r"\b(?:a|an|and|as|been|for|from|if|in|of|on|or|that|the|to|when|which|with)$", key)
@@ -557,7 +559,9 @@ def _formula_evidence(chunks: list[Chunk]) -> list[tuple[str, tuple[str, ...], C
 
 def _study_units(text: str) -> list[str]:
     """Keep bullet boundaries while joining lowercase PDF line wraps."""
-    lines = [line.strip() for line in text.replace("§", "\n").splitlines() if line.strip()]
+    normalized_text = text.replace("§", "\n")
+    normalized_text = re.sub(r"(?<=\S)[▪•■]\s+", "\n", normalized_text)
+    lines = [line.strip() for line in normalized_text.splitlines() if line.strip()]
     units: list[str] = []
     current = ""
     for raw in lines:
@@ -578,6 +582,7 @@ def _study_units(text: str) -> list[str]:
 
 def _split_study_sentences(text: str) -> list[str]:
     results = []
+    text = re.sub(r"(?<=[.!?])(?=[A-Z])", " ", text)
     for part in re.split(r"(?<=[.!?。！？])(?=\s+[A-Z㐀-鿿])", text):
         normalized = re.sub(r"\s+", " ", part).strip()
         if not normalized:
@@ -599,3 +604,49 @@ def _looks_like_title(text: str) -> bool:
         return False
     words = re.findall(r"[A-Za-z][A-Za-z0-9-]*", text)
     return 1 <= len(words) <= 8 and all(word[0].isupper() or word.isupper() for word in words)
+
+
+def _looks_incomplete(text: str) -> bool:
+    normalized = text.casefold().strip()
+    word_tokens = re.findall(r"[A-Za-z]+", text)
+    isolated_letters = sum(len(token) == 1 for token in word_tokens)
+    return (
+        not text[0].isupper()
+        or bool(re.search(r"\b(?:are|did|do|does|had|has|have|is|was|were)$", normalized))
+        or bool(re.search(r"\b(?:we(?:’|')re|we are|is|are|by)\s+[a-z]+ing$", normalized))
+        or bool(re.search(r"\b(?:t|th)\s+e\b", normalized))
+        or bool(re.match(r"^(?:only has|where is)\b", normalized))
+        or bool(
+            re.search(
+                r"\b[bcdfghjklmnpqrstvwxyz]{2,}\s+[bcdfghjklmnpqrstvwxyz]{2,}\b",
+                normalized,
+            )
+        )
+        or bool(re.search(r"[:;](?=[A-Z])", text))
+        or text.count("=") > 2
+        or (isolated_letters >= 3 and isolated_letters / max(len(word_tokens), 1) >= 0.3)
+        or any(
+            text.count(left) != text.count(right)
+            for left, right in (("(", ")"), ("[", "]"), ("{", "}"))
+        )
+    )
+
+
+def _summary_text(text: str) -> str:
+    """Preserve source punctuation and minimally close complete slide bullets."""
+    stripped = text.strip()
+    if re.search(r"[.!?。！？]$", stripped):
+        return stripped
+    if re.match(
+        r"^(?:how|what|when|where|which|who|why|can|could|do|does|is|are)\b",
+        stripped,
+        re.IGNORECASE,
+    ):
+        return f"{stripped}?"
+    return f"{stripped}."
+
+
+def _clean_candidate_text(text: str) -> str:
+    text = re.sub(r"\b([A-Za-z]{2,})-\s+([a-z]{2,})\b", r"\1\2", text)
+    text = re.sub(r"(?:\s+[A-Za-z]){2,}$", "", text)
+    return re.sub(r"\s+", " ", text).strip()
