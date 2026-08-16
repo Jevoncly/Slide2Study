@@ -53,11 +53,13 @@ class FormulaEvidence:
     formula_text: str
     symbols: tuple[str, ...]
     citation: EvidenceCitation
+    explanation_text: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return {
             "formula_text": self.formula_text,
             "symbols": list(self.symbols),
+            "explanation_text": self.explanation_text,
             "citation": self.citation.to_dict(),
         }
 
@@ -214,6 +216,7 @@ def build_chapter_study_guide(
             formula_text=text,
             symbols=symbols,
             citation=_citation(chunk, f"M{index}"),
+            explanation_text=_formula_explanation(text),
         )
         for index, (text, symbols, chunk) in enumerate(
             _formula_evidence(evidence_chunks)[:formula_count], 1
@@ -542,6 +545,11 @@ def _formula_evidence(chunks: list[Chunk]) -> list[tuple[str, tuple[str, ...], C
                 3 <= len(text) <= 240
                 and relation_pattern.search(text)
                 and structure_pattern.search(text)
+                and len(relation_pattern.findall(text)) <= 4
+                and not (
+                    re.match(r"^\d+[.)]\s", text)
+                    and len(relation_pattern.findall(text)) > 1
+                )
             ):
                 continue
             key = text.casefold()
@@ -555,6 +563,49 @@ def _formula_evidence(chunks: list[Chunk]) -> list[tuple[str, tuple[str, ...], C
             )
             results.append((text, symbols, chunk))
     return results
+
+
+def _formula_explanation(text: str) -> str | None:
+    """Return only an explicit natural-language explanation embedded in the formula line."""
+    cue_pattern = re.compile(
+        r"\b(?:action|array|cost|expected|function|length|maximum|minimum|number|optimal|"
+        r"path|probability|reward|sorted|state|subsequence|sum|time|transition|utility|weight)\b",
+        re.IGNORECASE,
+    )
+    candidates = []
+    equals_at = text.find("=")
+    colon_at = text.find(":")
+    if equals_at >= 0 and colon_at > equals_at:
+        candidates.append(text[colon_at + 1 :].strip())
+    if equals_at >= 0:
+        candidates.append(text[equals_at + 1 :].strip())
+    if colon_at >= 0:
+        candidates.append(text[:colon_at].strip())
+    seen = set()
+    for candidate in candidates:
+        candidate = candidate.strip(" .;:")
+        if re.search(r"(?:\s+[A-Za-z]){2,}$", candidate):
+            continue
+        candidate = _clean_candidate_text(candidate).strip(" .;:")
+        key = candidate.casefold()
+        words = re.findall(r"[A-Za-z]{2,}", candidate)
+        if (
+            key in seen
+            or not 4 <= len(words) <= 35
+            or not cue_pattern.search(candidate)
+            or re.search(r"\.{2,}|[‥…⋯]", candidate)
+            or candidate.count("=") > 1
+            or len(re.findall(r"(?:=|≤|≥|≈|→|∈)", candidate)) > 1
+            or any(
+                candidate.count(left) != candidate.count(right)
+                for left, right in (("(", ")"), ("[", "]"), ("{", "}"))
+            )
+            or re.search(r"\b(?:and|are|for|from|is|of|or|the|to|with)$", key)
+        ):
+            continue
+        seen.add(key)
+        return candidate
+    return None
 
 
 def _study_units(text: str) -> list[str]:

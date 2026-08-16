@@ -45,6 +45,7 @@ class StudyUiTests(unittest.TestCase):
             self.assertIn("闪卡练习", html)
             self.assertIn("重点概念", html)
             self.assertIn("公式/参数", html)
+            self.assertIn("本页未提供可可靠抽取的文字解释", html)
             self.assertIn("document-select", html)
             self.assertIn("page_assets", payload)
             self.assertEqual(payload["guides"][0]["section"], "Model Selection")

@@ -135,6 +135,7 @@ _HTML = """<!doctype html>
     .concept-card p { margin: 0 0 12px; color: #414b55; }
     .formula-card { padding: 18px; margin-bottom: 12px; border: 1px solid var(--line); border-left: 4px solid var(--green); border-radius: 14px; background: var(--panel); }
     .formula-text { margin-bottom: 11px; font: 650 18px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
+    .formula-explanation { margin: 0 0 10px; color: #34443e; }
     .symbols { margin-bottom: 10px; color: var(--muted); font-size: 13px; }
     .citation { border: 0; padding: 0; color: var(--accent-dark); background: transparent; cursor: pointer; font-size: 13px; font-weight: 800; text-decoration: underline; text-underline-offset: 3px; }
     .flash-stage { min-height: 390px; display: grid; align-content: center; }
@@ -296,7 +297,10 @@ _HTML = """<!doctype html>
         const symbols = document.createElement('div');
         symbols.className = 'symbols';
         symbols.textContent = item.symbols.length ? `检测到的符号：${item.symbols.join('、')}（含义需以课件原文为准）` : '未自动拆出独立符号；保留公式原文。';
-        card.append(formula, symbols, citationButton(item.citation));
+        const explanation = document.createElement('p');
+        explanation.className = 'formula-explanation';
+        explanation.textContent = item.explanation_text ? `课件原文解释：${item.explanation_text}` : '本页未提供可可靠抽取的文字解释。';
+        card.append(formula, explanation, symbols, citationButton(item.citation));
         list.append(card);
       });
       if (!model.formulas.length) list.innerHTML = '<div class="empty">本章节未检测到可可靠抽取的公式。</div>';

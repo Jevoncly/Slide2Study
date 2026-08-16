@@ -129,7 +129,26 @@ class OfflineStudyGuideTests(unittest.TestCase):
         self.assertTrue(guide.concepts)
         self.assertEqual(len(guide.formulas), 1)
         self.assertIn("V(s) =", guide.formulas[0].formula_text)
+        self.assertIsNone(guide.formulas[0].explanation_text)
         self.assertEqual(guide.formulas[0].citation.page_start, 3)
+
+    def test_formula_explanation_requires_explicit_natural_language(self):
+        chunks = [
+            passage(
+                "c1",
+                3,
+                "V*(s) = expected utility starting in state s and acting optimally.",
+            ),
+            passage("c2", 4, "V(s) = max_a Q(s,a)."),
+            passage("c3", 5, "π*(s) = optimal action from state s a s."),
+        ]
+
+        guide = build_chapter_study_guide(chunks, summary_bullets=2, flashcard_count=1)
+
+        self.assertEqual(
+            [item.explanation_text for item in guide.formulas],
+            ["expected utility starting in state s and acting optimally", None, None],
+        )
 
     def test_builds_all_viable_sections_for_course_ui(self):
         chunks = [
