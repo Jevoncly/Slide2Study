@@ -57,6 +57,7 @@ slide2study answer artifacts/course_chunks.jsonl "What does lambda control?" --t
 slide2study answer artifacts/course_chunks.jsonl "What does lambda control?" --retriever dense --dense-cache artifacts/dense_embeddings.json --output artifacts/dense_cited_answer.json
 slide2study answer artifacts/course_chunks.jsonl "Compare validation and test data" --retriever dense --dense-cache artifacts/dense_embeddings.json --max-answer-sentences 3
 slide2study generation-evaluate artifacts/course_chunks.jsonl data/generation_eval.jsonl --retriever dense --dense-cache artifacts/dense_embeddings.json --output artifacts/generation_eval.json
+slide2study study-guide artifacts/course_chunks.jsonl --document-id doc-example --section "Model Selection" --summary-bullets 5 --flashcards 5 --output artifacts/model_selection_guide.json
 slide2study dense-evaluate artifacts/course_chunks.jsonl data/private/eval.jsonl --cache artifacts/dense_embeddings.json --split test --top-k 5 --output artifacts/dense_report.json
 slide2study text-hybrid-evaluate artifacts/course_chunks.jsonl data/private/eval.jsonl --cache artifacts/dense_embeddings.json --bm25-weight 0.25 --dense-weight 1 --split test --output artifacts/text_hybrid_report.json
 slide2study type-aware-evaluate artifacts/course_chunks.jsonl data/private/eval.jsonl --manifests artifacts/pages/*.jsonl --dense-cache artifacts/dense_embeddings.json --visual-cache artifacts/page_embeddings.json --route text=bm25_page --route table_chart=clip_page --route visual_only=clip_page --split dev --output artifacts/type_aware_dev.json
@@ -90,6 +91,9 @@ BM25 与 CLIP；同一报告包含三路指标及逐题 Top 页面、命中状�
 默认最多抽取 1 条证据句以优先保证引用准确率；`--max-answer-sentences 2/3` 会只从首条证据的
 同一文档选择能覆盖新问题词项的补充句，并把引用紧跟在各句之后。独立生成评测中，3 句模式
 提高了引用覆盖和词项完整度，但降低引用准确率，因此作为显式选项而不是默认值。
+`study-guide` 按文档和章节生成完全离线的抽取式摘要及填空闪卡。摘要句、闪卡答案和证据文本
+均来自原始 passage，页码引用由 chunk 元数据统一构造；报告同时记录从语料加载到生成结束的
+端到端耗时。多文档或多章节语料必须显式选择 `--document-id` / `--section`，避免误混课程内容。
 `text-hybrid-evaluate` 对 BM25、Dense 和加权 RRF 使用同一批 chunk，保存三路指标和逐题
 Top chunk 诊断。融合参数必须只在 dev 上选择；如果 test 未超过 Dense，应继续使用 Dense
 单路作为默认检索器。

@@ -132,7 +132,13 @@ class GroundedAnswerGenerator(StudyMaterialGenerator):
         if any(evidence_id not in allowed for evidence_id in raw_cited_ids):
             return _refusal(kind, "generator_cited_unretrieved_evidence")
 
-        citations = [_citation_from_evidence(allowed[evidence_id]) for evidence_id in cited_ids]
+        citations = [
+            citation_from_search_result(
+                allowed[evidence_id].result,
+                evidence_id,
+            )
+            for evidence_id in cited_ids
+        ]
         citation_by_id = {
             citation.evidence_id: citation for citation in citations
         }
@@ -152,8 +158,12 @@ class GroundedAnswerGenerator(StudyMaterialGenerator):
         )
 
 
-def _citation_from_evidence(evidence: GroundedEvidence) -> EvidenceCitation:
-    chunk = evidence.result.chunk
+def citation_from_search_result(
+    result: SearchResult,
+    evidence_id: str,
+) -> EvidenceCitation:
+    """Build a trusted citation from retrieved chunk metadata."""
+    chunk = result.chunk
     source_name = str(
         chunk.metadata.get("source_name")
         or chunk.metadata.get("source_title")
@@ -162,7 +172,7 @@ def _citation_from_evidence(evidence: GroundedEvidence) -> EvidenceCitation:
     source_name = re.sub(r"[\[\]\r\n]+", " ", source_name).strip() or chunk.document_id
     source_name = re.sub(r"^#+\s*", "", source_name) or chunk.document_id
     return EvidenceCitation(
-        evidence_id=evidence.evidence_id,
+        evidence_id=evidence_id,
         document_id=chunk.document_id,
         page_start=chunk.page_start,
         page_end=chunk.page_end,

@@ -7,12 +7,12 @@
 - 规范工作目录：`E:\Work\Slide2study`
 - 课程测试数据：`D:\important files\Unimelb\S1`
 - GitHub：<https://github.com/Jevoncly/Slide2Study>
-- 当前分支：`agent/document-parsing`
-- 上一阶段提交：`4bd1270 Add balanced negative review workflow`
-- 远程跟踪分支：`origin/agent/document-parsing`
-- Draft PR：<https://github.com/Jevoncly/Slide2Study/pull/1>
+- 当前分支：`codex/expand-verified-dev`
+- 上一阶段提交：`a576543 Add offline multi-evidence answers`
+- 远程跟踪分支：`origin/codex/expand-verified-dev`
+- 历史 Draft PR：<https://github.com/Jevoncly/Slide2Study/pull/1>（指向旧分支）
 
-远程分支已推送至 `7aaafac`；`4bd1270` 及本阶段正例映射修复尚未推送。
+远程分支已推送至 `a576543`；本阶段离线章节摘要与闪卡改动尚未推送。
 
 ## 2. 项目目标
 
@@ -400,11 +400,23 @@ multimodal page retriever。
   `--max-answer-sentences 2/3` 只作为用户显式选择。该 holdout 已用于本轮生成策略比较，后续新
   生成算法不得再把它称为未查看的独立生成测试集。
 
+### 3.29 离线章节摘要与闪卡
+
+- 新增 `study-guide`，可按 `document_id` 和章节从 passage 生成完全离线的抽取式复习资料；
+  多文档或多章节语料必须显式选择目标，避免跨课程或跨章节混合。
+- 章节摘要采用覆盖度与页面多样性选择，每条摘要保留独立的原始 chunk 和页码引用；过滤版权、
+  商标、制作者和教学用途声明等常见课件样板文本。
+- 闪卡采用 cloze baseline：题面只遮盖原文中的一个术语，答案、完整证据句和页码引用同时保存，
+  不进行无依据的离线改写。
+- JSON 报告记录从语料加载到生成完成的端到端耗时。Berkeley Search 真实章节烟雾测试生成 4 条
+  摘要、4 张闪卡并覆盖第 4 和第 6 页，耗时约 8 ms；结果位于被忽略的
+  `artifacts/offline_study_guide_smoke.json`。
+
 ## 4. 验证证据
 
 ### 4.1 自动化测试
 
-- 当前测试：58/58 通过；Ruff 检查通过。
+- 当前测试：62/62 通过；Ruff 检查通过。
 - 测试覆盖：解析、质量诊断、三层 chunk、层级校验、BM25、评测指标、hard negatives、
   页面清单、PDF/PPTX 渲染流程、向量缓存及哈希校验、视觉页面排序、页面级评测、
   通用 chunk→page 映射、页面/chunk 加权 RRF、题型路由、逐题诊断、Dense 排序、chunk 缓存
@@ -453,8 +465,8 @@ python -m unittest discover -s tests -v
   Dense，题型门控在扩充 dev 上超过 Dense。新增 24 条 dev 为 AI 复核，正式对外结论前仍应
   做独立人工抽查；人工 test 仍只有 6 条。检索预训练 Reranker 已在 dev 显著提升排序质量，
   但尚未经过冻结 test 验证；多模态对比学习仍未实现。
-- 已实现 BM25/Dense 离线 extractive 基线、多证据答案和生成评测；不计划接入外部生成 API。
-  笔记、闪卡、题库、可点击引用和 UI 仍未实现。
+- 已实现 BM25/Dense 离线 extractive 基线、多证据答案、章节摘要、cloze 闪卡和生成评测；
+  不计划接入外部生成 API。重点概念/公式解释、分层题库、可点击引用和 UI 仍未实现。
 - 视觉页数量较多；后续需要通过标注集校准视觉风险阈值，而不是只依赖启发式规则。
 
 ## 6. 安装与运行
@@ -500,8 +512,8 @@ slide2study build-negative-review-pack artifacts\course_chunks.jsonl artifacts\b
 1. 保持 Dense 为默认检索器，将 Reranker 记录为“dev 提升、扩充 test 未复现”的失败消融；
    不得围绕当前 test 调模型或 candidate-k。
 2. 题型路由已经在 42 条 dev 上冻结；不得再用现有 18 条已查看 test 验证或调参。
-3. 保持完全离线；多证据答案与 faithfulness 已完成，下一步实现带页码的离线章节摘要和闪卡，
-   并补齐端到端延迟评测。
+3. 保持完全离线；下一步把章节摘要和闪卡接入简单本地 UI，优先实现可点击页码引用和原始页面
+   预览，再扩展重点概念与分层题库。
 
 短期最重要的不是继续堆功能，而是先获得可信的评测集和 baseline 数字。
 
@@ -524,5 +536,5 @@ git log -3 --oneline --decorate
 python -m unittest discover -s tests -v
 ```
 
-预期分支是 `agent/document-parsing`，最近已完成里程碑是 `072553f`。如果本文档后续被提交，
+预期分支是 `codex/expand-verified-dev`，最近已推送里程碑是 `a576543`。如果本文档后续被提交，
 则以更新后的 HEAD 为准。

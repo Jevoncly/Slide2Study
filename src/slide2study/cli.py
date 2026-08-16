@@ -5,6 +5,7 @@ import json
 import sys
 from datetime import datetime, timezone
 from pathlib import Path
+from time import perf_counter
 
 from slide2study.chunking import CHUNK_LEVELS, HierarchicalChunker
 from slide2study.dense import (
@@ -42,6 +43,7 @@ from slide2study.reranking import (
 )
 from slide2study.retrieval import BM25Retriever, DenseRetriever
 from slide2study.review import build_review_pack
+from slide2study.study import build_chapter_study_guide
 from slide2study.training import mine_hard_negatives
 from slide2study.vision import (
     SentenceTransformersCLIPEncoder,
@@ -309,6 +311,16 @@ def build_parser() -> argparse.ArgumentParser:
     generation_evaluation.add_argument("--top-k", type=int, default=5)
     generation_evaluation.add_argument("--levels", type=_parse_levels, default={"passage"})
     generation_evaluation.add_argument("--output", type=Path)
+
+    study_guide = commands.add_parser(
+        "study-guide", help="Create an offline page-cited chapter summary and flashcards"
+    )
+    study_guide.add_argument("corpus", type=Path)
+    study_guide.add_argument("--document-id")
+    study_guide.add_argument("--section")
+    study_guide.add_argument("--summary-bullets", type=int, default=5)
+    study_guide.add_argument("--flashcards", type=int, default=5)
+    study_guide.add_argument("--output", type=Path)
 
     evaluation = commands.add_parser("evaluate", help="Evaluate BM25 on a JSONL QA set")
     evaluation.add_argument("corpus", type=Path)
@@ -1168,6 +1180,28 @@ def main(argv: list[str] | None = None) -> int:
             },
             indent=2,
         )
+        return 0
+    if args.command == "study-guide":
+        started_at = perf_counter()
+        guide = build_chapter_study_guide(
+            load_chunks(args.corpus),
+            document_id=args.document_id,
+            section=args.section,
+            summary_bullets=args.summary_bullets,
+            flashcard_count=args.flashcards,
+        )
+        report = {
+            **guide.to_dict(),
+            "mode": "offline-extractive",
+            "latency_ms": {"end_to_end": round((perf_counter() - started_at) * 1000, 3)},
+        }
+        if args.output:
+            args.output.parent.mkdir(parents=True, exist_ok=True)
+            args.output.write_text(
+                json.dumps(report, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+            )
+            report["output"] = str(args.output)
+        _print_json(report, indent=2)
         return 0
     corpus_chunks = load_chunks(args.corpus)
     chunks = [chunk for chunk in corpus_chunks if chunk.level in args.levels]
