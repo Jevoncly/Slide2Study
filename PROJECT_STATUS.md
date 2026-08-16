@@ -8,11 +8,11 @@
 - 课程测试数据：`D:\important files\Unimelb\S1`
 - GitHub：<https://github.com/Jevoncly/Slide2Study>
 - 当前分支：`codex/expand-verified-dev`
-- 上一阶段提交：`a576543 Add offline multi-evidence answers`
+- 上一阶段提交：`071b1e7 Add offline cited study guides`
 - 远程跟踪分支：`origin/codex/expand-verified-dev`
 - 历史 Draft PR：<https://github.com/Jevoncly/Slide2Study/pull/1>（指向旧分支）
 
-远程分支已推送至 `a576543`；本阶段离线章节摘要与闪卡改动尚未推送。
+远程分支已推送至 `071b1e7`；本阶段本地学习 UI 改动尚未推送。
 
 ## 2. 项目目标
 
@@ -412,11 +412,22 @@ multimodal page retriever。
   摘要、4 张闪卡并覆盖第 4 和第 6 页，耗时约 8 ms；结果位于被忽略的
   `artifacts/offline_study_guide_smoke.json`。
 
+### 3.30 完全离线本地学习 UI
+
+- 新增 `build-study-ui`，从章节摘要、闪卡和页面渲染清单生成可直接打开的静态学习页面；不需要
+  Web 服务、前端框架、外部 API 或网络资源。
+- 页面包含章节摘要/闪卡切换、闪卡翻转、浏览器本机掌握进度、可点击引用、证据页前后切换和
+  响应式双栏布局；所有动态课件文本均使用安全的文本节点渲染。
+- 构建时只复制当前学习材料实际引用的页面图片；缺失引用页会拒绝生成，避免出现引用可点击但
+  无原始证据的静默失败。
+- Berkeley Search 真实章节 UI 已生成至 `artifacts/offline_study_ui/index.html`：4 条摘要、4 张
+  闪卡、2 个证据页，端到端构建约 14 ms；可执行脚本语法检查通过。
+
 ## 4. 验证证据
 
 ### 4.1 自动化测试
 
-- 当前测试：62/62 通过；Ruff 检查通过。
+- 当前测试：64/64 通过；Ruff 检查通过。
 - 测试覆盖：解析、质量诊断、三层 chunk、层级校验、BM25、评测指标、hard negatives、
   页面清单、PDF/PPTX 渲染流程、向量缓存及哈希校验、视觉页面排序、页面级评测、
   通用 chunk→page 映射、页面/chunk 加权 RRF、题型路由、逐题诊断、Dense 排序、chunk 缓存
@@ -465,8 +476,8 @@ python -m unittest discover -s tests -v
   Dense，题型门控在扩充 dev 上超过 Dense。新增 24 条 dev 为 AI 复核，正式对外结论前仍应
   做独立人工抽查；人工 test 仍只有 6 条。检索预训练 Reranker 已在 dev 显著提升排序质量，
   但尚未经过冻结 test 验证；多模态对比学习仍未实现。
-- 已实现 BM25/Dense 离线 extractive 基线、多证据答案、章节摘要、cloze 闪卡和生成评测；
-  不计划接入外部生成 API。重点概念/公式解释、分层题库、可点击引用和 UI 仍未实现。
+- 已实现 BM25/Dense 离线 extractive 基线、多证据答案、章节摘要、cloze 闪卡、生成评测和
+  带原始页面预览的本地 UI；不计划接入外部生成 API。重点概念/公式解释和分层题库仍未实现。
 - 视觉页数量较多；后续需要通过标注集校准视觉风险阈值，而不是只依赖启发式规则。
 
 ## 6. 安装与运行
@@ -512,8 +523,8 @@ slide2study build-negative-review-pack artifacts\course_chunks.jsonl artifacts\b
 1. 保持 Dense 为默认检索器，将 Reranker 记录为“dev 提升、扩充 test 未复现”的失败消融；
    不得围绕当前 test 调模型或 candidate-k。
 2. 题型路由已经在 42 条 dev 上冻结；不得再用现有 18 条已查看 test 验证或调参。
-3. 保持完全离线；下一步把章节摘要和闪卡接入简单本地 UI，优先实现可点击页码引用和原始页面
-   预览，再扩展重点概念与分层题库。
+3. 保持完全离线；下一步在现有 UI 中加入章节选择和重点概念/公式解释，再扩展基础题、应用题
+   和综合推理题。
 
 短期最重要的不是继续堆功能，而是先获得可信的评测集和 baseline 数字。
 
@@ -536,5 +547,5 @@ git log -3 --oneline --decorate
 python -m unittest discover -s tests -v
 ```
 
-预期分支是 `codex/expand-verified-dev`，最近已推送里程碑是 `a576543`。如果本文档后续被提交，
+预期分支是 `codex/expand-verified-dev`，最近已推送里程碑是 `071b1e7`。如果本文档后续被提交，
 则以更新后的 HEAD 为准。

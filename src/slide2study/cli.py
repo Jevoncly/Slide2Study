@@ -44,6 +44,7 @@ from slide2study.reranking import (
 from slide2study.retrieval import BM25Retriever, DenseRetriever
 from slide2study.review import build_review_pack
 from slide2study.study import build_chapter_study_guide
+from slide2study.study_ui import build_study_ui
 from slide2study.training import mine_hard_negatives
 from slide2study.vision import (
     SentenceTransformersCLIPEncoder,
@@ -321,6 +322,17 @@ def build_parser() -> argparse.ArgumentParser:
     study_guide.add_argument("--summary-bullets", type=int, default=5)
     study_guide.add_argument("--flashcards", type=int, default=5)
     study_guide.add_argument("--output", type=Path)
+
+    study_ui = commands.add_parser(
+        "build-study-ui", help="Build a local offline study UI with page previews"
+    )
+    study_ui.add_argument("corpus", type=Path)
+    study_ui.add_argument("--manifests", nargs="+", type=Path, required=True)
+    study_ui.add_argument("--document-id")
+    study_ui.add_argument("--section")
+    study_ui.add_argument("--summary-bullets", type=int, default=5)
+    study_ui.add_argument("--flashcards", type=int, default=5)
+    study_ui.add_argument("--output-dir", type=Path, required=True)
 
     evaluation = commands.add_parser("evaluate", help="Evaluate BM25 on a JSONL QA set")
     evaluation.add_argument("corpus", type=Path)
@@ -1202,6 +1214,35 @@ def main(argv: list[str] | None = None) -> int:
             )
             report["output"] = str(args.output)
         _print_json(report, indent=2)
+        return 0
+    if args.command == "build-study-ui":
+        started_at = perf_counter()
+        guide = build_chapter_study_guide(
+            load_chunks(args.corpus),
+            document_id=args.document_id,
+            section=args.section,
+            summary_bullets=args.summary_bullets,
+            flashcard_count=args.flashcards,
+        )
+        rendered_pages = [
+            page
+            for manifest in _expand_paths(args.manifests)
+            for page in load_page_manifest(manifest)
+        ]
+        output = build_study_ui(guide, rendered_pages, args.output_dir)
+        _print_json(
+            {
+                "mode": "offline-local-ui",
+                "document_id": guide.document_id,
+                "section": guide.section,
+                "summary_bullets": len(guide.summary),
+                "flashcards": len(guide.flashcards),
+                "cited_pages": guide.to_dict()["cited_pages"],
+                "latency_ms": {"end_to_end": round((perf_counter() - started_at) * 1000, 3)},
+                "output": str(output),
+            },
+            indent=2,
+        )
         return 0
     corpus_chunks = load_chunks(args.corpus)
     chunks = [chunk for chunk in corpus_chunks if chunk.level in args.levels]
