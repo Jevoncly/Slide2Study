@@ -8,11 +8,11 @@
 - 课程测试数据：`D:\important files\Unimelb\S1`
 - GitHub：<https://github.com/Jevoncly/Slide2Study>
 - 当前分支：`codex/expand-verified-dev`
-- 上一阶段提交：`071b1e7 Add offline cited study guides`
+- 上一阶段提交：`4819970 Add offline study UI`
 - 远程跟踪分支：`origin/codex/expand-verified-dev`
 - 历史 Draft PR：<https://github.com/Jevoncly/Slide2Study/pull/1>（指向旧分支）
 
-远程分支已推送至 `071b1e7`；本阶段本地学习 UI 改动尚未推送。
+远程分支已推送至 `4819970`；本阶段整门课程导航与概念/公式改动尚未推送。
 
 ## 2. 项目目标
 
@@ -423,11 +423,23 @@ multimodal page retriever。
 - Berkeley Search 真实章节 UI 已生成至 `artifacts/offline_study_ui/index.html`：4 条摘要、4 张
   闪卡、2 个证据页，端到端构建约 14 ms；可执行脚本语法检查通过。
 
+### 3.31 整门课程导航、重点概念与公式证据
+
+- `build-study-ui` 不再要求手动指定单个 `document_id` 和章节；省略筛选参数时会按课件和页码
+  顺序构建全部有实质文本的章节，并在页面顶部提供课件与章节两级选择器。
+- 每章新增重点概念列表：从原文中优先抽取多词术语，并同时展示完整证据句和页码；闪卡继续
+  复用相同的可信证据边界。
+- 新增公式/参数证据页：识别等号、不等号、求和、希腊字母等数学信号，保留原文和检测到的
+  符号。系统明确提示符号含义应以课件原文为准，不把参数配置误写成公式解释。
+- 对 7 份公开课件完成整门课程构建：45 个可用章节、150 条摘要、149 个重点概念、149 张闪卡、
+  61 条公式/参数证据和 142 个去重引用页；端到端约 257 ms，HTML 数据、资源数量及交互脚本
+  语法检查全部通过。产物位于 `artifacts/public_course_study_ui/index.html`。
+
 ## 4. 验证证据
 
 ### 4.1 自动化测试
 
-- 当前测试：64/64 通过；Ruff 检查通过。
+- 当前测试：66/66 通过；Ruff 检查通过。
 - 测试覆盖：解析、质量诊断、三层 chunk、层级校验、BM25、评测指标、hard negatives、
   页面清单、PDF/PPTX 渲染流程、向量缓存及哈希校验、视觉页面排序、页面级评测、
   通用 chunk→page 映射、页面/chunk 加权 RRF、题型路由、逐题诊断、Dense 排序、chunk 缓存
@@ -477,7 +489,8 @@ python -m unittest discover -s tests -v
   做独立人工抽查；人工 test 仍只有 6 条。检索预训练 Reranker 已在 dev 显著提升排序质量，
   但尚未经过冻结 test 验证；多模态对比学习仍未实现。
 - 已实现 BM25/Dense 离线 extractive 基线、多证据答案、章节摘要、cloze 闪卡、生成评测和
-  带原始页面预览的本地 UI；不计划接入外部生成 API。重点概念/公式解释和分层题库仍未实现。
+  带原始页面预览的整门课程 UI；不计划接入外部生成 API。可靠的符号含义解释和分层题库仍未
+  实现。
 - 视觉页数量较多；后续需要通过标注集校准视觉风险阈值，而不是只依赖启发式规则。
 
 ## 6. 安装与运行
@@ -523,7 +536,7 @@ slide2study build-negative-review-pack artifacts\course_chunks.jsonl artifacts\b
 1. 保持 Dense 为默认检索器，将 Reranker 记录为“dev 提升、扩充 test 未复现”的失败消融；
    不得围绕当前 test 调模型或 candidate-k。
 2. 题型路由已经在 42 条 dev 上冻结；不得再用现有 18 条已查看 test 验证或调参。
-3. 保持完全离线；下一步在现有 UI 中加入章节选择和重点概念/公式解释，再扩展基础题、应用题
+3. 保持完全离线；下一步从公式邻近定义句提取可靠的符号含义，再实现带证据的基础题、应用题
    和综合推理题。
 
 短期最重要的不是继续堆功能，而是先获得可信的评测集和 baseline 数字。
@@ -547,5 +560,5 @@ git log -3 --oneline --decorate
 python -m unittest discover -s tests -v
 ```
 
-预期分支是 `codex/expand-verified-dev`，最近已推送里程碑是 `071b1e7`。如果本文档后续被提交，
+预期分支是 `codex/expand-verified-dev`，最近已推送里程碑是 `4819970`。如果本文档后续被提交，
 则以更新后的 HEAD 为准。

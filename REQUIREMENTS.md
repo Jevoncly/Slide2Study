@@ -192,7 +192,7 @@ Slide2Study 是一个面向算法工程师求职展示的多模态、结构感�
 ### 15. 复习资料生成
 
 - [x] 章节摘要（离线 extractive baseline）
-- [ ] 重点概念列表
+- [x] 重点概念列表（离线原文术语 baseline）
 - [ ] 公式解释
 - [x] 闪卡（离线 cloze baseline）
 - [ ] 基础题

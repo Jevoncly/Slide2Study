@@ -43,8 +43,8 @@ from slide2study.reranking import (
 )
 from slide2study.retrieval import BM25Retriever, DenseRetriever
 from slide2study.review import build_review_pack
-from slide2study.study import build_chapter_study_guide
-from slide2study.study_ui import build_study_ui
+from slide2study.study import build_chapter_study_guide, build_course_study_guides
+from slide2study.study_ui import build_course_study_ui
 from slide2study.training import mine_hard_negatives
 from slide2study.vision import (
     SentenceTransformersCLIPEncoder,
@@ -321,6 +321,8 @@ def build_parser() -> argparse.ArgumentParser:
     study_guide.add_argument("--section")
     study_guide.add_argument("--summary-bullets", type=int, default=5)
     study_guide.add_argument("--flashcards", type=int, default=5)
+    study_guide.add_argument("--concepts", type=int, default=5)
+    study_guide.add_argument("--formulas", type=int, default=5)
     study_guide.add_argument("--output", type=Path)
 
     study_ui = commands.add_parser(
@@ -332,6 +334,8 @@ def build_parser() -> argparse.ArgumentParser:
     study_ui.add_argument("--section")
     study_ui.add_argument("--summary-bullets", type=int, default=5)
     study_ui.add_argument("--flashcards", type=int, default=5)
+    study_ui.add_argument("--concepts", type=int, default=5)
+    study_ui.add_argument("--formulas", type=int, default=5)
     study_ui.add_argument("--output-dir", type=Path, required=True)
 
     evaluation = commands.add_parser("evaluate", help="Evaluate BM25 on a JSONL QA set")
@@ -1201,6 +1205,8 @@ def main(argv: list[str] | None = None) -> int:
             section=args.section,
             summary_bullets=args.summary_bullets,
             flashcard_count=args.flashcards,
+            concept_count=args.concepts,
+            formula_count=args.formulas,
         )
         report = {
             **guide.to_dict(),
@@ -1217,27 +1223,37 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "build-study-ui":
         started_at = perf_counter()
-        guide = build_chapter_study_guide(
+        guides = build_course_study_guides(
             load_chunks(args.corpus),
             document_id=args.document_id,
             section=args.section,
             summary_bullets=args.summary_bullets,
             flashcard_count=args.flashcards,
+            concept_count=args.concepts,
+            formula_count=args.formulas,
         )
         rendered_pages = [
             page
             for manifest in _expand_paths(args.manifests)
             for page in load_page_manifest(manifest)
         ]
-        output = build_study_ui(guide, rendered_pages, args.output_dir)
+        output = build_course_study_ui(guides, rendered_pages, args.output_dir)
         _print_json(
             {
                 "mode": "offline-local-ui",
-                "document_id": guide.document_id,
-                "section": guide.section,
-                "summary_bullets": len(guide.summary),
-                "flashcards": len(guide.flashcards),
-                "cited_pages": guide.to_dict()["cited_pages"],
+                "documents": len({guide.document_id for guide in guides}),
+                "sections": len(guides),
+                "summary_bullets": sum(len(guide.summary) for guide in guides),
+                "concepts": sum(len(guide.concepts) for guide in guides),
+                "formulas": sum(len(guide.formulas) for guide in guides),
+                "flashcards": sum(len(guide.flashcards) for guide in guides),
+                "cited_pages": len(
+                    {
+                        (guide.document_id, page)
+                        for guide in guides
+                        for page in guide.to_dict()["cited_pages"]
+                    }
+                ),
                 "latency_ms": {"end_to_end": round((perf_counter() - started_at) * 1000, 3)},
                 "output": str(output),
             },

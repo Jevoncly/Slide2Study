@@ -43,8 +43,12 @@ class StudyUiTests(unittest.TestCase):
 
             self.assertIn("章节摘要", html)
             self.assertIn("闪卡练习", html)
+            self.assertIn("重点概念", html)
+            self.assertIn("公式/参数", html)
+            self.assertIn("document-select", html)
             self.assertIn("page_assets", payload)
-            copied = root / "ui" / payload["page_assets"]["2"]
+            self.assertEqual(payload["guides"][0]["section"], "Model Selection")
+            copied = root / "ui" / payload["page_assets"]["deck-1:2"]
             self.assertEqual(copied.read_bytes(), b"fake-png")
             self.assertNotIn(str(image), html)
 

@@ -7,7 +7,7 @@ from pathlib import Path
 
 from slide2study.cli import main as cli_main
 from slide2study.models import Chunk
-from slide2study.study import build_chapter_study_guide
+from slide2study.study import build_chapter_study_guide, build_course_study_guides
 
 
 def passage(chunk_id: str, page: int, text: str, section: str = "Model Selection") -> Chunk:
@@ -62,6 +62,31 @@ class OfflineStudyGuideTests(unittest.TestCase):
         guide = build_chapter_study_guide(chunks, summary_bullets=2, flashcard_count=1)
 
         self.assertEqual([item.text for item in guide.summary], [chunks[0].text])
+
+    def test_extracts_concepts_and_formula_evidence(self):
+        chunks = [
+            passage(
+                "c1",
+                3,
+                "The Bellman update is V(s) = max_a Q(s,a). Value iteration repeats this update.",
+            )
+        ]
+        guide = build_chapter_study_guide(chunks, summary_bullets=1, flashcard_count=2)
+
+        self.assertTrue(guide.concepts)
+        self.assertEqual(len(guide.formulas), 1)
+        self.assertIn("V(s) =", guide.formulas[0].formula_text)
+        self.assertEqual(guide.formulas[0].citation.page_start, 3)
+
+    def test_builds_all_viable_sections_for_course_ui(self):
+        chunks = [
+            passage("c1", 1, "Validation data selects model hyperparameters.", "Validation"),
+            passage("c2", 2, "Test data estimates final generalization.", "Testing"),
+        ]
+
+        guides = build_course_study_guides(chunks, summary_bullets=1, flashcard_count=1)
+
+        self.assertEqual([guide.section for guide in guides], ["Validation", "Testing"])
 
     def test_cli_writes_guide_and_end_to_end_latency(self):
         chunks = [

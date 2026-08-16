@@ -13,7 +13,18 @@ def build_study_ui(
     rendered_pages: list[RenderedPage],
     output_dir: str | Path,
 ) -> Path:
-    """Build a self-contained local study UI with trusted page previews."""
+    """Backward-compatible single-section UI builder."""
+    return build_course_study_ui([guide], rendered_pages, output_dir)
+
+
+def build_course_study_ui(
+    guides: list[ChapterStudyGuide] | tuple[ChapterStudyGuide, ...],
+    rendered_pages: list[RenderedPage],
+    output_dir: str | Path,
+) -> Path:
+    """Build a multi-document local study UI with trusted page previews."""
+    if not guides:
+        raise ValueError("At least one study guide is required")
     target = Path(output_dir)
     assets = target / "assets"
     assets.mkdir(parents=True, exist_ok=True)
@@ -24,22 +35,28 @@ def build_study_ui(
     }
     page_assets: dict[str, str] = {}
     missing = []
-    for page_number in guide.to_dict()["cited_pages"]:
-        page = page_lookup.get((guide.document_id, page_number))
+    cited_keys = {
+        (guide.document_id, page_number)
+        for guide in guides
+        for page_number in guide.to_dict()["cited_pages"]
+    }
+    for document_id, page_number in sorted(cited_keys):
+        page = page_lookup.get((document_id, page_number))
         if page is None or not Path(page.image_path).is_file():
-            missing.append(page_number)
+            missing.append(f"{document_id}:p.{page_number}")
             continue
         suffix = Path(page.image_path).suffix.lower() or ".png"
-        name = f"{guide.document_id}-page-{page_number:04d}{suffix}"
+        name = f"{document_id}-page-{page_number:04d}{suffix}"
         shutil.copy2(page.image_path, assets / name)
-        page_assets[str(page_number)] = f"assets/{name}"
+        page_assets[f"{document_id}:{page_number}"] = f"assets/{name}"
     if missing:
         raise ValueError(f"Missing rendered page images for cited pages: {missing}")
 
     payload = {
-        **guide.to_dict(),
+        "guides": [
+            {**guide.to_dict(), "source_name": _source_name(guide)} for guide in guides
+        ],
         "page_assets": page_assets,
-        "source_name": _source_name(guide),
     }
     serialized = json.dumps(payload, ensure_ascii=False).replace("</", "<\\/")
     html = _HTML.replace("__STUDY_DATA__", serialized)
@@ -49,7 +66,10 @@ def build_study_ui(
 
 
 def _source_name(guide: ChapterStudyGuide) -> str:
-    citations = [item.citation for item in (*guide.summary, *guide.flashcards)]
+    citations = [
+        item.citation
+        for item in (*guide.summary, *guide.flashcards, *guide.concepts, *guide.formulas)
+    ]
     return citations[0].source_name if citations else guide.document_id
 
 
@@ -91,6 +111,10 @@ _HTML = """<!doctype html>
     .status { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
     .pill { padding: 6px 11px; border-radius: 999px; border: 1px solid var(--line); background: rgba(255,255,255,.55); font-size: 13px; font-weight: 700; }
     .pill.offline { color: var(--green); border-color: rgba(41,107,88,.35); }
+    .course-nav { display: grid; grid-template-columns: minmax(220px, 1fr) minmax(260px, 1.4fr); gap: 12px; padding: 14px 16px; margin-bottom: 18px; }
+    .field { display: grid; gap: 5px; }
+    .field label { color: var(--muted); font-size: 12px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
+    .field select { width: 100%; border: 1px solid var(--line); border-radius: 11px; padding: 10px 12px; color: var(--ink); background: white; font: inherit; }
     .workspace { display: grid; grid-template-columns: minmax(0, 1.05fr) minmax(380px, .95fr); gap: 22px; align-items: start; }
     .panel { background: rgba(255,253,248,.93); border: 1px solid var(--line); border-radius: 22px; box-shadow: var(--shadow); overflow: hidden; }
     .tabs { display: flex; gap: 4px; padding: 10px; border-bottom: 1px solid var(--line); background: rgba(236,231,219,.55); }
@@ -105,6 +129,13 @@ _HTML = """<!doctype html>
     .summary-card { display: grid; grid-template-columns: 38px 1fr; gap: 12px; padding: 17px; border: 1px solid var(--line); border-radius: 15px; background: var(--panel); }
     .number { width: 34px; height: 34px; display: grid; place-items: center; border-radius: 50%; background: #efe8dc; color: var(--accent-dark); font: 700 15px Georgia, serif; }
     .summary-card p { margin: 2px 0 12px; }
+    .concept-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+    .concept-card { padding: 17px; border: 1px solid var(--line); border-radius: 15px; background: var(--panel); }
+    .concept-term { margin-bottom: 8px; color: var(--accent-dark); font: 700 22px/1.2 Georgia, serif; }
+    .concept-card p { margin: 0 0 12px; color: #414b55; }
+    .formula-card { padding: 18px; margin-bottom: 12px; border: 1px solid var(--line); border-left: 4px solid var(--green); border-radius: 14px; background: var(--panel); }
+    .formula-text { margin-bottom: 11px; font: 650 18px/1.5 ui-monospace, SFMono-Regular, Consolas, monospace; overflow-wrap: anywhere; }
+    .symbols { margin-bottom: 10px; color: var(--muted); font-size: 13px; }
     .citation { border: 0; padding: 0; color: var(--accent-dark); background: transparent; cursor: pointer; font-size: 13px; font-weight: 800; text-decoration: underline; text-underline-offset: 3px; }
     .flash-stage { min-height: 390px; display: grid; align-content: center; }
     .flashcard { position: relative; min-height: 290px; border: 0; border-radius: 20px; padding: 0; background: transparent; cursor: pointer; perspective: 1000px; text-align: left; }
@@ -134,6 +165,7 @@ _HTML = """<!doctype html>
       .shell { width: min(100% - 24px, 760px); padding-top: 18px; }
       header { align-items: flex-start; flex-direction: column; }
       .status { justify-content: flex-start; }
+      .course-nav, .concept-grid { grid-template-columns: 1fr; }
       .workspace { grid-template-columns: 1fr; }
       .preview { position: static; }
     }
@@ -153,15 +185,29 @@ _HTML = """<!doctype html>
         <span class="pill" id="page-count"></span>
       </div>
     </header>
+    <section class="panel course-nav" aria-label="课程章节选择">
+      <div class="field"><label for="document-select">课件</label><select id="document-select"></select></div>
+      <div class="field"><label for="section-select">章节</label><select id="section-select"></select></div>
+    </section>
     <div class="workspace">
       <section class="panel">
         <nav class="tabs" aria-label="学习模式">
           <button class="tab" data-tab="summary" aria-selected="true">章节摘要</button>
+          <button class="tab" data-tab="concepts" aria-selected="false">重点概念</button>
+          <button class="tab" data-tab="formulas" aria-selected="false">公式/参数</button>
           <button class="tab" data-tab="flashcards" aria-selected="false">闪卡练习</button>
         </nav>
         <div class="view active" id="summary-view">
           <div class="section-head"><h2>核心内容</h2><span class="count" id="summary-count"></span></div>
           <div class="summary-list" id="summary-list"></div>
+        </div>
+        <div class="view" id="concepts-view">
+          <div class="section-head"><h2>重点概念</h2><span class="count" id="concept-count"></span></div>
+          <div class="concept-grid" id="concept-list"></div>
+        </div>
+        <div class="view" id="formulas-view">
+          <div class="section-head"><h2>公式与参数证据</h2><span class="count" id="formula-count"></span></div>
+          <div id="formula-list"></div>
         </div>
         <div class="view" id="flashcards-view">
           <div class="section-head"><h2>主动回忆</h2><span class="count" id="flash-progress"></span></div>
@@ -185,19 +231,13 @@ _HTML = """<!doctype html>
   </main>
   <script type="application/json" id="study-data">__STUDY_DATA__</script>
   <script>
-    const model = JSON.parse(document.getElementById('study-data').textContent);
-    const pages = model.cited_pages;
+    const app = JSON.parse(document.getElementById('study-data').textContent);
+    let model = app.guides[0];
+    let pages = model.cited_pages;
     let pageIndex = 0;
     let cardIndex = 0;
-    const masteryKey = `slide2study:${model.document_id}:${model.section}:mastery`;
-    let mastered;
-    try { mastered = new Set(JSON.parse(localStorage.getItem(masteryKey) || '[]')); }
-    catch { mastered = new Set(); }
-
-    document.getElementById('chapter-title').textContent = model.section;
-    document.getElementById('source-name').textContent = model.source_name;
-    document.getElementById('page-count').textContent = `${pages.length} 个证据页`;
-    document.getElementById('summary-count').textContent = `${model.summary.length} 条 · 均可追溯`;
+    let masteryKey = '';
+    let mastered = new Set();
 
     function citationButton(citation) {
       const button = document.createElement('button');
@@ -207,19 +247,61 @@ _HTML = """<!doctype html>
       return button;
     }
 
-    model.summary.forEach((item, index) => {
-      const card = document.createElement('article');
-      card.className = 'summary-card';
-      const number = document.createElement('div');
-      number.className = 'number';
-      number.textContent = String(index + 1).padStart(2, '0');
-      const body = document.createElement('div');
-      const text = document.createElement('p');
-      text.textContent = item.text;
-      body.append(text, citationButton(item.citation));
-      card.append(number, body);
-      document.getElementById('summary-list').append(card);
-    });
+    function renderSummary() {
+      const list = document.getElementById('summary-list');
+      list.replaceChildren();
+      model.summary.forEach((item, index) => {
+        const card = document.createElement('article');
+        card.className = 'summary-card';
+        const number = document.createElement('div');
+        number.className = 'number';
+        number.textContent = String(index + 1).padStart(2, '0');
+        const body = document.createElement('div');
+        const text = document.createElement('p');
+        text.textContent = item.text;
+        body.append(text, citationButton(item.citation));
+        card.append(number, body);
+        list.append(card);
+      });
+      document.getElementById('summary-count').textContent = `${model.summary.length} 条 · 均可追溯`;
+    }
+
+    function renderConcepts() {
+      const list = document.getElementById('concept-list');
+      list.replaceChildren();
+      model.concepts.forEach(item => {
+        const card = document.createElement('article');
+        card.className = 'concept-card';
+        const term = document.createElement('div');
+        term.className = 'concept-term';
+        term.textContent = item.term;
+        const evidence = document.createElement('p');
+        evidence.textContent = item.evidence_text;
+        card.append(term, evidence, citationButton(item.citation));
+        list.append(card);
+      });
+      if (!model.concepts.length) list.innerHTML = '<div class="empty">本章节没有稳定的概念候选。</div>';
+      document.getElementById('concept-count').textContent = `${model.concepts.length} 个`;
+    }
+
+    function renderFormulas() {
+      const list = document.getElementById('formula-list');
+      list.replaceChildren();
+      model.formulas.forEach(item => {
+        const card = document.createElement('article');
+        card.className = 'formula-card';
+        const formula = document.createElement('div');
+        formula.className = 'formula-text';
+        formula.textContent = item.formula_text;
+        const symbols = document.createElement('div');
+        symbols.className = 'symbols';
+        symbols.textContent = item.symbols.length ? `检测到的符号：${item.symbols.join('、')}（含义需以课件原文为准）` : '未自动拆出独立符号；保留公式原文。';
+        card.append(formula, symbols, citationButton(item.citation));
+        list.append(card);
+      });
+      if (!model.formulas.length) list.innerHTML = '<div class="empty">本章节未检测到可可靠抽取的公式。</div>';
+      document.getElementById('formula-count').textContent = `${model.formulas.length} 条`;
+    }
 
     function renderFlashcard() {
       const stage = document.getElementById('flash-stage');
@@ -252,19 +334,65 @@ _HTML = """<!doctype html>
       const index = pages.indexOf(page);
       if (index >= 0) pageIndex = index;
       const current = pages[pageIndex];
-      document.getElementById('page-image').src = model.page_assets[String(current)];
+      document.getElementById('page-image').src = app.page_assets[`${model.document_id}:${current}`];
       document.getElementById('preview-title').textContent = `原始课件 · 第 ${current} 页`;
       document.querySelectorAll('.page-chip').forEach(chip => chip.classList.toggle('active', Number(chip.dataset.page) === current));
     }
 
-    pages.forEach(page => {
-      const chip = document.createElement('button');
-      chip.className = 'page-chip';
-      chip.dataset.page = page;
-      chip.textContent = `p.${page}`;
-      chip.addEventListener('click', () => showPage(page));
-      document.getElementById('page-strip').append(chip);
+    function renderPageStrip() {
+      const strip = document.getElementById('page-strip');
+      strip.replaceChildren();
+      pages.forEach(page => {
+        const chip = document.createElement('button');
+        chip.className = 'page-chip';
+        chip.dataset.page = page;
+        chip.textContent = `p.${page}`;
+        chip.addEventListener('click', () => showPage(page));
+        strip.append(chip);
+      });
+    }
+
+    function loadGuide(guide) {
+      model = guide;
+      pages = model.cited_pages;
+      pageIndex = 0;
+      cardIndex = 0;
+      masteryKey = `slide2study:${model.document_id}:${model.section}:mastery`;
+      try { mastered = new Set(JSON.parse(localStorage.getItem(masteryKey) || '[]')); }
+      catch { mastered = new Set(); }
+      document.getElementById('chapter-title').textContent = model.section;
+      document.getElementById('source-name').textContent = model.source_name;
+      document.getElementById('page-count').textContent = `${pages.length} 个证据页`;
+      ['previous-card', 'next-card', 'master-card'].forEach(id => document.getElementById(id).disabled = false);
+      renderSummary();
+      renderConcepts();
+      renderFormulas();
+      renderFlashcard();
+      renderPageStrip();
+      showPage(pages[0]);
+    }
+
+    const documentSelect = document.getElementById('document-select');
+    const sectionSelect = document.getElementById('section-select');
+    const documents = [...new Map(app.guides.map(guide => [guide.document_id, guide.source_name])).entries()];
+    documents.forEach(([documentId, sourceName]) => {
+      const option = document.createElement('option');
+      option.value = documentId;
+      option.textContent = sourceName;
+      documentSelect.append(option);
     });
+    function populateSections(documentId) {
+      sectionSelect.replaceChildren();
+      app.guides.filter(guide => guide.document_id === documentId).forEach((guide, index) => {
+        const option = document.createElement('option');
+        option.value = String(app.guides.indexOf(guide));
+        option.textContent = `${index + 1}. ${guide.section}`;
+        sectionSelect.append(option);
+      });
+      loadGuide(app.guides[Number(sectionSelect.value)]);
+    }
+    documentSelect.addEventListener('change', () => populateSections(documentSelect.value));
+    sectionSelect.addEventListener('change', () => loadGuide(app.guides[Number(sectionSelect.value)]));
 
     document.querySelectorAll('.tab').forEach(tab => tab.addEventListener('click', () => {
       document.querySelectorAll('.tab').forEach(item => item.setAttribute('aria-selected', String(item === tab)));
@@ -281,8 +409,7 @@ _HTML = """<!doctype html>
     document.getElementById('previous-page').addEventListener('click', () => { pageIndex = (pageIndex - 1 + pages.length) % pages.length; showPage(pages[pageIndex]); });
     document.getElementById('next-page').addEventListener('click', () => { pageIndex = (pageIndex + 1) % pages.length; showPage(pages[pageIndex]); });
 
-    renderFlashcard();
-    showPage(pages[0]);
+    populateSections(documents[0][0]);
   </script>
 </body>
 </html>
