@@ -311,6 +311,10 @@ def build_parser() -> argparse.ArgumentParser:
     review.add_argument(
         "--manifests", nargs="*", type=Path, default=[], help="Rendered page manifests"
     )
+    review.add_argument("--split", choices=sorted(DATASET_SPLITS))
+    review.add_argument("--reviewer-type", choices=("ai", "human"))
+    review.add_argument("--reset-review-state", action="store_true")
+    review.add_argument("--verified-reviewer-type", choices=("ai", "human"))
 
     mining = commands.add_parser("mine-negatives", help="Mine BM25 hard negatives for training")
     mining.add_argument("corpus", type=Path)
@@ -1061,9 +1065,28 @@ def main(argv: list[str] | None = None) -> int:
             require_annotation_statuses=True,
             chunks=review_chunks,
         )
+        if args.split:
+            review_examples = [
+                example for example in review_examples if example.get("split") == args.split
+            ]
+        if args.reviewer_type:
+            review_examples = [
+                example
+                for example in review_examples
+                if example.get("reviewer_type") == args.reviewer_type
+            ]
+        if not review_examples:
+            raise ValueError("No review examples match the requested filters")
         rendered_pages = _load_rendered_pages(args.manifests)
         _print_json(
-            build_review_pack(review_examples, review_chunks, args.output, rendered_pages),
+            build_review_pack(
+                review_examples,
+                review_chunks,
+                args.output,
+                rendered_pages,
+                reset_review_state=args.reset_review_state,
+                verified_reviewer_type=args.verified_reviewer_type,
+            ),
             indent=2,
         )
         return 0

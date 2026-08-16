@@ -30,6 +30,7 @@ slide2study search artifacts/sample_chunks.jsonl "正则化" --levels page,passa
 slide2study validate-dataset examples/retrieval_eval.jsonl --strict
 slide2study evaluate artifacts/sample_chunks.jsonl examples/retrieval_eval.jsonl --split test --top-k 3 --strict-dataset --output artifacts/bm25_report.json
 slide2study build-review-pack artifacts/course_chunks.jsonl data/private/eval.jsonl --output artifacts/review/index.html --manifests artifacts/pages/*.jsonl
+slide2study build-review-pack artifacts/course_chunks.jsonl data/private/eval.jsonl --output artifacts/ai_dev_review/index.html --manifests artifacts/pages/*.jsonl --split dev --reviewer-type ai --reset-review-state --verified-reviewer-type human
 slide2study mine-negatives artifacts/sample_chunks.jsonl examples/retrieval_eval.jsonl --output artifacts/train_triplets.jsonl
 ```
 
@@ -95,6 +96,9 @@ passage 仍全部排除出负例。
 生成，除非显式使用 `--allow-incomplete`。
 如果一次复核约定“未选择即通过”，必须显式同时使用 `--pending-as-valid --allow-incomplete`；
 该约定会写入摘要，明确标为假负例或不确定的条目仍会被排除。
+`build-review-pack` 可用 `--split` 和 `--reviewer-type` 生成专项抽查包；
+`--reset-review-state` 会把已有机器复核状态重置为未复核，配合
+`--verified-reviewer-type human` 可在人工选择通过后记录独立复核来源。
 `train-reranker` 将规范 triplet 展开为 query-positive 和 query-negative 二分类样本，正例对会
 自动去重；默认从 multilingual-e5-small 初始化交叉编码器分类头，固定随机种子，并将模型
 checkpoint 与训练配置写入输出目录。传入 `--dev-dataset` 和 `--dense-cache` 后，命令冻结

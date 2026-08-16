@@ -275,11 +275,20 @@ multimodal page retriever。
   MRR 提高 0.103、nDCG@5 提高 0.057，代价是约 2.3 倍延迟。当前 dev 配置固定为 k=5。
 - 仍未运行 test；必须先完成新增 AI-dev 的独立人工抽查，再对冻结配置做一次测试集评估。
 
+### 3.19 AI-dev 独立人工抽查包
+
+- `build-review-pack` 新增 split、reviewer type 筛选，可只构建待独立抽查的数据子集。
+- `--reset-review-state` 会将原有机器复核状态重置为未复核，避免页面打开时错误显示已完成；
+  `--verified-reviewer-type human` 会在人工选择通过并导出后更新复核来源。
+- 本地专项包 `artifacts/ai_dev_human_review/index.html` 包含 24 条 AI-dev、32 个证据页和
+  32 张页面图片，缺图 0；train/test 记录均为 0，初始状态为 0/24。
+- 专项包及导出结果均位于 Git 忽略的 `artifacts/`，不会公开课件内容或未冻结标注。
+
 ## 4. 验证证据
 
 ### 4.1 自动化测试
 
-- 当前测试：47/47 通过；Ruff 检查通过。
+- 当前测试：48/48 通过；Ruff 检查通过。
 - 测试覆盖：解析、质量诊断、三层 chunk、层级校验、BM25、评测指标、hard negatives、
   页面清单、PDF/PPTX 渲染流程、向量缓存及哈希校验、视觉页面排序、页面级评测、
   通用 chunk→page 映射、页面/chunk 加权 RRF、题型路由、逐题诊断、Dense 排序、chunk 缓存

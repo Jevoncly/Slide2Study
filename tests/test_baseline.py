@@ -1145,6 +1145,35 @@ class BaselineTests(unittest.TestCase):
         self.assertIn("function currentReview(record)", html)
         self.assertIn("record.review_notes", html)
 
+    def test_review_pack_can_reset_ai_review_for_independent_human_check(self):
+        page_chunk = next(chunk for chunk in self.chunks if chunk.level == "page")
+        example = {
+            "id": "ai-dev-q1",
+            "query": "Question",
+            "document_id": page_chunk.document_id,
+            "relevant_pages": [page_chunk.page_start],
+            "relevant_chunk_ids": [page_chunk.chunk_id],
+            "question_type": "text",
+            "split": "dev",
+            "annotation_status": "verified",
+            "reviewer_type": "ai",
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            output = Path(directory) / "index.html"
+            summary = build_review_pack(
+                [example],
+                self.chunks,
+                output,
+                reset_review_state=True,
+                verified_reviewer_type="human",
+            )
+            html = output.read_text(encoding="utf-8")
+        self.assertTrue(summary["reset_review_state"])
+        self.assertEqual(summary["verified_reviewer_type"], "human")
+        self.assertIn('"annotation_status": "candidate"', html)
+        self.assertIn('"verified_reviewer_type": "human"', html)
+        self.assertIn("record.reviewer_type = payload.verified_reviewer_type", html)
+
     @unittest.skipUnless(importlib.util.find_spec("PIL"), "Pillow is not installed")
     def test_pdf_renderer_writes_stable_page_mapping(self):
         from PIL import Image
