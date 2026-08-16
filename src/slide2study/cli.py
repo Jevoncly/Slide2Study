@@ -35,6 +35,7 @@ from slide2study.reranking import (
     CrossEncoderReranker,
     RerankedRetriever,
     build_reranker_pairs,
+    build_reranker_validation_groups,
     train_cross_encoder,
 )
 from slide2study.retrieval import BM25Retriever, DenseRetriever
@@ -366,6 +367,12 @@ def build_parser() -> argparse.ArgumentParser:
     train_reranker.add_argument("--learning-rate", type=float, default=2e-5)
     train_reranker.add_argument("--seed", type=int, default=42)
     train_reranker.add_argument("--local-files-only", action="store_true")
+    train_reranker.add_argument("--dev-dataset", type=Path)
+    train_reranker.add_argument("--dense-cache", type=Path)
+    train_reranker.add_argument("--candidate-k", type=int, default=20)
+    train_reranker.add_argument("--validation-top-k", type=int, default=5)
+    train_reranker.add_argument("--early-stopping-patience", type=int, default=2)
+    train_reranker.add_argument("--early-stopping-min-delta", type=float, default=0.0)
 
     reranker_evaluation = commands.add_parser(
         "reranker-evaluate", help="Evaluate Dense candidates reordered by a cross-encoder"
@@ -906,6 +913,36 @@ def main(argv: list[str] | None = None) -> int:
         chunks = load_chunks(args.corpus)
         triplets = list(read_jsonl(args.triplets))
         pairs, data_summary = build_reranker_pairs(triplets, chunks)
+        if bool(args.dev_dataset) != bool(args.dense_cache):
+            raise ValueError("--dev-dataset and --dense-cache must be provided together")
+        validation_groups = None
+        if args.dev_dataset:
+            passage_chunks = [chunk for chunk in chunks if chunk.level == "passage"]
+            embeddings, cache_metadata = load_chunk_embedding_cache(
+                passage_chunks, args.dense_cache
+            )
+            encoder = SentenceTransformersTextEncoder(
+                cache_metadata["model"],
+                args.device,
+                32,
+                cache_metadata["query_prefix"],
+                cache_metadata["document_prefix"],
+            )
+            dense = DenseRetriever(passage_chunks, encoder, embeddings)
+            dev_examples = [
+                row for row in read_jsonl(args.dev_dataset) if row.get("split") == "dev"
+            ]
+            validate_dataset(
+                dev_examples,
+                require_question_types=True,
+                require_splits=True,
+                require_document_ids=True,
+                require_annotation_statuses=True,
+                chunks=chunks,
+            )
+            validation_groups = build_reranker_validation_groups(
+                dev_examples, dense, candidate_k=args.candidate_k
+            )
         training_summary = train_cross_encoder(
             pairs,
             args.output_dir,
@@ -916,6 +953,10 @@ def main(argv: list[str] | None = None) -> int:
             learning_rate=args.learning_rate,
             seed=args.seed,
             local_files_only=args.local_files_only,
+            validation_groups=validation_groups,
+            validation_top_k=args.validation_top_k,
+            early_stopping_patience=args.early_stopping_patience,
+            early_stopping_min_delta=args.early_stopping_min_delta,
         )
         _print_json({"data": data_summary, "training": training_summary}, indent=2)
         return 0

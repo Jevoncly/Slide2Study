@@ -58,7 +58,7 @@ slide2study dense-mine-negatives artifacts/course_chunks.jsonl data/private/eval
 slide2study dense-mine-negatives artifacts/course_chunks.jsonl data/private/eval.jsonl --cache artifacts/dense_embeddings.json --split train --hard-per-query 2 --medium-per-query 1 --easy-per-query 1 --output artifacts/balanced_triplets.jsonl
 slide2study build-negative-review-pack artifacts/course_chunks.jsonl artifacts/balanced_triplets.jsonl --output artifacts/negative_review/index.html
 slide2study apply-negative-reviews artifacts/negative_review/reviewed-negative-triplets.jsonl --output artifacts/reviewed_train_triplets.jsonl
-slide2study train-reranker artifacts/course_chunks.jsonl artifacts/reviewed_train_triplets.jsonl --output-dir artifacts/reranker --epochs 1
+slide2study train-reranker artifacts/course_chunks.jsonl artifacts/reviewed_train_triplets.jsonl --output-dir artifacts/reranker --epochs 10 --dev-dataset data/private/eval.jsonl --dense-cache artifacts/dense_embeddings.json --early-stopping-patience 2
 slide2study reranker-evaluate artifacts/course_chunks.jsonl data/private/eval.jsonl --cache artifacts/dense_embeddings.json --reranker artifacts/reranker --split dev --output artifacts/reranker_dev_report.json
 ```
 
@@ -94,7 +94,10 @@ passage 仍全部排除出负例。
 生成，除非显式使用 `--allow-incomplete`。
 `train-reranker` 将规范 triplet 展开为 query-positive 和 query-negative 二分类样本，正例对会
 自动去重；默认从 multilingual-e5-small 初始化交叉编码器分类头，固定随机种子，并将模型
-checkpoint 与训练配置写入输出目录。该命令建立训练链路，正式模型选择仍需独立 dev 集。
+checkpoint 与训练配置写入输出目录。传入 `--dev-dataset` 和 `--dense-cache` 后，命令冻结
+Dense Top-N 候选，每个 epoch 按 dev MRR、Recall@K 和 nDCG@K 评估，保存最佳 checkpoint，
+并按 patience 早停。最佳 epoch 与逐 epoch 曲线写入 `slide2study_training.json`；不得把 test
+传给训练命令。
 `reranker-evaluate` 从缓存 Dense 检索获取较宽的候选集，再用 cross-encoder 重排，并使用同一
 套 Recall、MRR、nDCG 和延迟指标评估；模型选择只应使用 dev split。
 

@@ -242,11 +242,23 @@ multimodal page retriever。
   误落在同编号的 DP 记录。现已恢复两条 DP 记录，并将决定和备注迁移到正确的 Search 记录；
   两条 Search train 已按备注修正并完成人工确认。
 
+### 3.17 Reranker 验证与模型选择链路
+
+- `train-reranker` 可接收独立 dev 数据集和 Dense 向量缓存，训练前冻结 Dense Top-N 候选。
+- 每个 epoch 直接计算候选重排后的 Recall@K、MRR 和 nDCG@K，以 dev MRR 选择最佳 checkpoint。
+- 支持 patience 和 min-delta 早停；最佳 epoch、最佳 MRR、是否早停及逐 epoch 曲线均保存到
+  `slide2study_training.json`。
+- 未提供 dev 时仍保留原有单次训练模式；提供 dev 时必须同时提供 Dense 缓存，避免静默使用
+  不可复现的候选集。
+- 本阶段只完成并验证训练基础设施，尚未用未经人工筛查的公开课件负例训练或查看 test。
+- 已从公开课件 train 的 18 个问题生成 72 条待复核候选：hard 36、medium 18、easy 18；
+  本地审阅包为 `artifacts/public_courseware_reranker_review/index.html`，72/72 条可解析。
+
 ## 4. 验证证据
 
 ### 4.1 自动化测试
 
-- 当前测试：44/44 通过；Ruff 检查通过。
+- 当前测试：45/45 通过；Ruff 检查通过。
 - 测试覆盖：解析、质量诊断、三层 chunk、层级校验、BM25、评测指标、hard negatives、
   页面清单、PDF/PPTX 渲染流程、向量缓存及哈希校验、视觉页面排序、页面级评测、
   通用 chunk→page 映射、页面/chunk 加权 RRF、题型路由、逐题诊断、Dense 排序、chunk 缓存
@@ -338,7 +350,8 @@ slide2study build-negative-review-pack artifacts\course_chunks.jsonl artifacts\b
 ## 7. 推荐的下一阶段
 
 1. 对新增 24 条 AI 复核 dev 做独立人工抽查，再冻结题型门控配置。
-2. 使用复核后的 triplet 微调 Reranker，比较能否在不损害 Dense 首位命中的前提下改善困难查询。
+2. 为公开课件 train 挖掘并复核困难负例，再用已具备 dev-MRR 早停和最佳 checkpoint 保存的
+   链路微调 Reranker，比较能否在不损害 Dense 首位命中的前提下改善困难查询。
 3. 扩充并冻结人工 test 后完成消融，再接带引用生成。
 
 短期最重要的不是继续堆功能，而是先获得可信的评测集和 baseline 数字。

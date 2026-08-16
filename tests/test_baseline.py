@@ -36,7 +36,12 @@ from slide2study.parsing import (
     build_parse_report,
     prepare_pages_for_retrieval,
 )
-from slide2study.reranking import RerankedRetriever, build_reranker_pairs
+from slide2study.reranking import (
+    RerankedRetriever,
+    RerankerValidationEvaluator,
+    build_reranker_pairs,
+    build_reranker_validation_groups,
+)
 from slide2study.retrieval import BM25Retriever, DenseRetriever, mixed_tokenize
 from slide2study.review import build_review_pack
 from slide2study.training import mine_hard_negatives
@@ -471,6 +476,44 @@ class BaselineTests(unittest.TestCase):
         results = RerankedRetriever(base, ReverseReranker(), candidate_k=4).search("q", top_k=2)
         self.assertEqual(base.requested, 4)
         self.assertEqual([item.chunk.chunk_id for item in results], ["chunk-3", "chunk-2"])
+
+    def test_reranker_validation_uses_page_labels_and_reports_ranking_metrics(self):
+        chunks = [
+            Chunk("wrong", "deck", 1, 1, "distractor"),
+            Chunk("right", "deck", 2, 2, "answer"),
+        ]
+
+        class CandidateRetriever:
+            def search(self, _query, top_k=5):
+                return [
+                    SearchResult(chunk, 1.0 / rank, rank)
+                    for rank, chunk in enumerate(chunks[:top_k], 1)
+                ]
+
+        groups = build_reranker_validation_groups(
+            [
+                {
+                    "query": "question",
+                    "document_id": "deck",
+                    "relevant_pages": [2],
+                }
+            ],
+            CandidateRetriever(),
+            candidate_k=2,
+        )
+        self.assertEqual(groups[0].relevance, [0, 1])
+
+        class FakeModel:
+            def predict(self, pairs, show_progress_bar=False):
+                self.show_progress_bar = show_progress_bar
+                return [0.1 if text == "distractor" else 0.9 for _query, text in pairs]
+
+        evaluator = RerankerValidationEvaluator(groups, top_k=2, patience=2)
+        metrics = evaluator(FakeModel(), epoch=1, steps=3)
+        self.assertEqual(metrics["recall_at_k"], 1.0)
+        self.assertEqual(metrics["mrr"], 1.0)
+        self.assertEqual(metrics["ndcg_at_k"], 1.0)
+        self.assertTrue(evaluator.history[0]["improved"])
 
     def test_parse_report_flags_pages_that_need_vision(self):
         pages = [
